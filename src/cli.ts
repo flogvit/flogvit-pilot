@@ -28,6 +28,8 @@ const COMMANDS: Record<string, () => Promise<CommandModule>> = {
   "test-gen": () => import("./commands/test-gen"),
   verify: () => import("./commands/verify"),
   triage: () => import("./commands/triage"),
+  "plan-issue": () => import("./commands/plan-issue"),
+  "fix-pr": () => import("./commands/fix-pr"),
   "review-pr": () => import("./commands/review-pr"),
   "audit-pr": () => import("./commands/audit-pr"),
   "pr-review": () => import("./commands/pr-review"),
@@ -95,6 +97,8 @@ Commands:
   test-gen            Generate missing tests
   verify              Run tests + lint + Playwright
   triage              Triage and label new issues
+  plan-issue <#>      Generate implementation plan for a vague issue
+  fix-pr <#>          Fix a PR after review/audit failure
   review-pr <#>       AI code review of a PR → advance to needs-audit
   audit-pr <#>        Security audit of a PR → advance to approved
   pr-review <#>       Review a pull request
