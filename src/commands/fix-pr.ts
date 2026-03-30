@@ -60,6 +60,8 @@ export async function fixPR(
   const issue = await getIssue(issueNum, cwd);
   const diff = await getPRDiff(prNumber, cwd);
 
+  await addPRLabel(prNumber, LABELS.inProgress, cwd);
+
   const wtPath = worktreePath(homeDir, repoName, `fix-pr-${prNumber}`);
 
   const cleanup = async () => {
@@ -118,9 +120,6 @@ export async function fixPR(
   const diffResult = await $`git status --porcelain`.cwd(wtPath).text();
   const hasChanges = diffResult.trim().length > 0;
 
-  process.off("SIGINT", cleanup);
-  process.off("SIGTERM", cleanup);
-
   if (parsed.status === "stuck" || (!hasChanges && parsed.status !== "done")) {
     await removeWorktree(wtPath, cwd).catch(() => {});
 
@@ -137,12 +136,14 @@ export async function fixPR(
       prFixAttempts,
     });
 
+    await removePRLabel(prNumber, LABELS.inProgress, cwd);
     logger.summary(`PR #${prNumber}: fix-pr stuck (attempt ${prFixAttempts})`);
     return { success: false };
   }
 
   if (!hasChanges) {
     await removeWorktree(wtPath, cwd);
+    await removePRLabel(prNumber, LABELS.inProgress, cwd);
     logger.summary(`PR #${prNumber}: no changes made`);
     return { success: false };
   }
@@ -156,6 +157,7 @@ export async function fixPR(
   await removeWorktree(wtPath, cwd);
 
   // Remove failure labels, add needs-verify to restart pipeline
+  await removePRLabel(prNumber, LABELS.inProgress, cwd);
   await removePRLabel(prNumber, LABELS.changesRequested, cwd);
   await removePRLabel(prNumber, LABELS.failed, cwd);
   await addPRLabel(prNumber, LABELS.needsVerify, cwd);
@@ -174,6 +176,8 @@ export async function fixPR(
     prFixAttempts: 0,
   });
 
+  process.off("SIGINT", cleanup);
+  process.off("SIGTERM", cleanup);
   logger.summary(`PR #${prNumber}: fixed and pushed — pipeline restarted`);
   return { success: true };
 }
