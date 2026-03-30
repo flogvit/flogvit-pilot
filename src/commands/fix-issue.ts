@@ -68,6 +68,14 @@ export async function fixIssue(
   const issue = await getIssue(issueNum, cwd);
   await addLabel(issueNum, LABELS.inProgress, cwd);
 
+  // Clean up label if process is interrupted
+  const cleanup = async () => {
+    await removeLabel(issueNum, LABELS.inProgress, cwd).catch(() => {});
+    process.exit(1);
+  };
+  process.once("SIGINT", cleanup);
+  process.once("SIGTERM", cleanup);
+
   // Build prompt
   const template = await loadTemplate("fix-issue", {
     builtinDir: __dirname,
@@ -173,6 +181,8 @@ export async function fixIssue(
     formatIssueComment("done", `Created PR: ${prUrl}`),
     cwd
   );
+  process.off("SIGINT", cleanup);
+  process.off("SIGTERM", cleanup);
   await removeLabel(issueNum, LABELS.inProgress, cwd);
   await clearState(stateDir, repoContext.repoName, issueNum);
 
