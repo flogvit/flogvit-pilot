@@ -2,6 +2,7 @@ import { $ } from "bun";
 import { resolve, dirname, basename } from "path";
 import { fileURLToPath } from "url";
 import { mkdir, appendFile } from "fs/promises";
+import { homedir } from "os";
 import type { Config } from "../lib/config";
 import { resolveToolForCommand } from "../lib/config";
 import { getTool } from "../lib/tool-runner";
@@ -63,7 +64,7 @@ export async function fixIssue(
   verbose: boolean = false,
   retryModel?: string
 ): Promise<{ success: boolean; prUrl?: string }> {
-  const homeDir = process.env.HOME ?? "~";
+  const homeDir = process.env.HOME ?? homedir();
   const logDir = resolve(homeDir, ".flogvit-coder", "logs");
   const stateDir = resolve(homeDir, ".flogvit-coder", "state");
   const repoContext = await gatherRepoContext(cwd);
@@ -135,7 +136,7 @@ export async function fixIssue(
   const parsed = parseToolOutput(result.output);
 
   // Check if there are actual changes
-  const diffResult = await $`git diff --stat`.cwd(wtPath).text();
+  const diffResult = await $`git status --porcelain`.cwd(wtPath).text();
   const hasChanges = diffResult.trim().length > 0;
 
   if (parsed.status === "stuck" || (!hasChanges && parsed.status !== "done")) {
@@ -209,5 +210,7 @@ export async function run(args: string[], config: Config, cwd: string): Promise<
   }
 
   const verbose = args.includes("--verbose") || args.includes("-v");
-  await fixIssue(issueNum, config, cwd, verbose);
+  const retryModelIndex = args.indexOf("--retry-model");
+  const retryModel = retryModelIndex !== -1 ? args[retryModelIndex + 1] : undefined;
+  await fixIssue(issueNum, config, cwd, verbose, retryModel);
 }

@@ -26,7 +26,7 @@ export function findAnsweredIssues(
   return answered;
 }
 
-async function watchRepo(config: Config, cwd: string): Promise<void> {
+async function watchRepo(config: Config, cwd: string, retryModel?: string): Promise<void> {
   const repoName = basename(cwd);
   const homeDir = process.env.HOME ?? "~";
   const stateDir = resolve(homeDir, ".flogvit-coder", "state");
@@ -44,7 +44,7 @@ async function watchRepo(config: Config, cwd: string): Promise<void> {
     if (existingState) continue;
 
     console.log(`Found new autofix issue #${issue.number}: ${issue.title}`);
-    await fixIssue(issue.number, config, cwd);
+    await fixIssue(issue.number, config, cwd, false, retryModel);
   }
 
   // 2. Check for answered waiting issues
@@ -59,7 +59,7 @@ async function watchRepo(config: Config, cwd: string): Promise<void> {
     if (!lastComment.body.includes("🤖 **flogvit-coder**")) {
       console.log(`Issue #${waitingIssue.number} has been answered, resuming...`);
       await removeLabel(waitingIssue.number, LABELS.waiting, cwd);
-      await fixIssue(waitingIssue.number, config, cwd);
+      await fixIssue(waitingIssue.number, config, cwd, false, retryModel);
     }
   }
 }
@@ -67,15 +67,17 @@ async function watchRepo(config: Config, cwd: string): Promise<void> {
 export async function run(args: string[], config: Config, cwd: string): Promise<void> {
   const reposFlag = args.find((a) => a.startsWith("--repos"));
   const reposValue = reposFlag ? args[args.indexOf(reposFlag) + 1] : undefined;
+  const retryModelIndex = args.indexOf("--retry-model");
+  const retryModel = retryModelIndex !== -1 ? args[retryModelIndex + 1] : undefined;
 
   if (reposValue) {
     const repos = reposValue.split(",").map((r) => r.trim());
     for (const repo of repos) {
       const resolvedPath = resolve(repo);
       console.log(`Checking ${resolvedPath}...`);
-      await watchRepo(config, resolvedPath);
+      await watchRepo(config, resolvedPath, retryModel);
     }
   } else {
-    await watchRepo(config, cwd);
+    await watchRepo(config, cwd, retryModel);
   }
 }
