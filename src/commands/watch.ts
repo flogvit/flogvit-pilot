@@ -1,7 +1,7 @@
 import { resolve, basename } from "path";
 import { homedir } from "os";
 import type { Config } from "../lib/config";
-import { listIssuesWithLabel, listPRsWithLabel, listOpenIssues, listOpenPRs, getIssue, removeLabel, addLabel, addPRLabel, LABELS } from "../lib/github";
+import { listOpenIssues, listOpenPRs, getIssue, removeLabel, addLabel, addPRLabel, LABELS } from "../lib/github";
 import { loadState, saveState } from "../lib/state";
 import { triageIssue } from "./triage";
 import { planIssue } from "./plan-issue";
@@ -20,8 +20,16 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
   const repoName = basename(cwd);
   const homeDir = process.env.HOME ?? homedir();
   const stateDir = resolve(homeDir, ".flogvit-coder", "state");
-  // 1. Detect unlabeled issues → set needs-triage (skip ignored issues)
+
+  // Fetch all open issues and PRs in two calls — filter locally
   const allOpenIssues = await listOpenIssues(cwd);
+  const allOpenPRs = await listOpenPRs(cwd);
+
+  const byLabel = (label: string) => allOpenIssues.filter((i) => i.labels.includes(label));
+  const prsByLabel = (label: string) => allOpenPRs.filter((pr) => pr.labels.includes(label));
+  const inProgressNums = new Set(byLabel(LABELS.inProgress).map((i) => i.number));
+
+  // 1. Detect unlabeled issues → set needs-triage
   for (const issue of allOpenIssues) {
     if (issue.labels.includes(LABELS.ignore)) continue;
     if (issue.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX) || ALL_KNOWN_LABELS.has(l as never))) continue;
@@ -29,8 +37,7 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
     await addLabel(issue.number, LABELS.needsTriage, cwd);
   }
 
-  // 1b. Detect unlabeled PRs → set needs-verify (skip ignored PRs)
-  const allOpenPRs = await listOpenPRs(cwd);
+  // 2. Detect unlabeled PRs → set needs-verify
   for (const pr of allOpenPRs) {
     if (pr.labels.includes(LABELS.ignore)) continue;
     if (pr.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX))) continue;
@@ -38,28 +45,22 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
     await addPRLabel(pr.number, LABELS.needsVerify, cwd);
   }
 
-  // 2. Dispatch triage for needs-triage issues
-  const inProgressIssues = await listIssuesWithLabel(LABELS.inProgress, cwd);
-  const inProgressNums = new Set(inProgressIssues.map((i) => i.number));
-
-  const needsTriageIssues = await listIssuesWithLabel(LABELS.needsTriage, cwd);
-  for (const issue of needsTriageIssues) {
+  // 3. Dispatch triage for needs-triage issues
+  for (const issue of byLabel(LABELS.needsTriage)) {
     if (inProgressNums.has(issue.number)) continue;
     console.log(`Triaging issue #${issue.number}: ${issue.title}`);
     await triageIssue(issue.number, config, cwd);
   }
 
-  // 3. Dispatch plan-issue for needs-plan issues
-  const needsPlanIssues = await listIssuesWithLabel(LABELS.needsPlan, cwd);
-  for (const issue of needsPlanIssues) {
+  // 4. Dispatch plan-issue for needs-plan issues
+  for (const issue of byLabel(LABELS.needsPlan)) {
     if (inProgressNums.has(issue.number)) continue;
     console.log(`Planning issue #${issue.number}: ${issue.title}`);
     await planIssue(issue.number, config, cwd);
   }
 
-  // 4. Check for new autofix issues (and retry stuck ones)
-  const autofixIssues = await listIssuesWithLabel(LABELS.autofix, cwd);
-  for (const issue of autofixIssues) {
+  // 5. Dispatch fix for autofix issues (and retry stuck ones)
+  for (const issue of byLabel(LABELS.autofix)) {
     if (inProgressNums.has(issue.number)) continue;
     const existingState = await loadState(stateDir, repoName, issue.number);
 
@@ -69,9 +70,7 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
         // Leftover triage state — proceed normally
       } else if (existingState.command === "fix-issue") {
         const attempts = existingState.fixAttempts ?? 0;
-        const issueLabels = allOpenIssues.find((i) => i.number === issue.number)?.labels ?? [];
-        if (attempts >= 3 || !issueLabels.includes(LABELS.waiting)) continue;
-        // Stuck fix — remove waiting and retry with escalated model
+        if (attempts >= 3 || !issue.labels.includes(LABELS.waiting)) continue;
         retryModel = "opus";
         console.log(`Retrying stuck fix for issue #${issue.number} (attempt ${attempts + 1})`);
         await removeLabel(issue.number, LABELS.waiting, cwd);
@@ -84,11 +83,9 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
     await fixIssue(issue.number, config, cwd, false, retryModel);
   }
 
-  // 5. Check for answered waiting issues → set needs-triage
-  const waitingIssues = await listIssuesWithLabel(LABELS.waiting, cwd);
-  const waitingWithComments = await Promise.all(
-    waitingIssues.map((i) => getIssue(i.number, cwd))
-  );
+  // 6. Check for answered waiting issues → set needs-triage
+  const waitingIssues = byLabel(LABELS.waiting);
+  const waitingWithComments = await Promise.all(waitingIssues.map((i) => getIssue(i.number, cwd)));
   const answeredNums = findAnsweredIssues(waitingWithComments, "🤖 **flogvit-coder**");
   for (const num of answeredNums) {
     console.log(`Issue #${num} has been answered, setting needs-triage...`);
@@ -96,51 +93,36 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
     await addLabel(num, LABELS.needsTriage, cwd);
   }
 
-  // 6. Retry changes-requested and failed PRs with fix-pr
-  for (const label of [LABELS.changesRequested, LABELS.failed] as const) {
-    const prs = await listPRsWithLabel(label, cwd);
-    for (const pr of prs) {
-      if (pr.labels.includes(LABELS.inProgress)) continue;
-      // Skip if already approved — pipeline has superseded the failure
-      if (pr.labels.includes(LABELS.approved)) continue;
-      const issueNum = parsePRIssueNumber(pr.body);
-      if (!issueNum) continue;
-      const state = await loadState(stateDir, repoName, issueNum);
-      const prFixAttempts = state?.prFixAttempts ?? 0;
-      if (prFixAttempts >= 3) {
-        console.log(`PR #${pr.number}: prFixAttempts exhausted, skipping`);
-        continue;
-      }
-      const model = prFixAttempts >= 1 ? "opus" : undefined;
-      console.log(`Fixing ${label} PR #${pr.number} (attempt ${prFixAttempts + 1})`);
-      await fixPR(pr.number, config, cwd, false, model);
+  // 7. Retry changes-requested and failed PRs with fix-pr
+  const retryPRs = allOpenPRs.filter((pr) =>
+    pr.labels.includes(LABELS.changesRequested) || pr.labels.includes(LABELS.failed)
+  );
+  for (const pr of retryPRs) {
+    if (pr.labels.includes(LABELS.inProgress)) continue;
+    if (pr.labels.includes(LABELS.approved)) continue;
+    const issueNum = parsePRIssueNumber(pr.body);
+    if (!issueNum) continue;
+    const state = await loadState(stateDir, repoName, issueNum);
+    const prFixAttempts = state?.prFixAttempts ?? 0;
+    if (prFixAttempts >= 3) {
+      console.log(`PR #${pr.number}: prFixAttempts exhausted, skipping`);
+      continue;
     }
+    const model = prFixAttempts >= 1 ? "opus" : undefined;
+    console.log(`Fixing PR #${pr.number} (attempt ${prFixAttempts + 1})`);
+    await fixPR(pr.number, config, cwd, false, model);
   }
 
-  // 7. Dispatch pipeline stages
+  // 8. Dispatch pipeline stages
   for (const stage of PIPELINE_STAGES) {
-    const stageLabel = STAGE_LABELS[stage];
-    const prs = await listPRsWithLabel(stageLabel, cwd);
-
-    for (const pr of prs) {
-      // Skip if already in-progress
+    for (const pr of prsByLabel(STAGE_LABELS[stage])) {
       if (pr.labels.includes(LABELS.inProgress)) continue;
-
       console.log(`Dispatching ${stage} for PR #${pr.number}: ${pr.title}`);
-
       switch (stage) {
-        case "verify":
-          await verifyPR(pr.number, config, cwd);
-          break;
-        case "review":
-          await reviewPR(pr.number, config, cwd);
-          break;
-        case "audit":
-          await auditPR(pr.number, config, cwd);
-          break;
-        case "merge":
-          await mergeRun([], config, cwd);
-          break;
+        case "verify": await verifyPR(pr.number, config, cwd); break;
+        case "review": await reviewPR(pr.number, config, cwd); break;
+        case "audit": await auditPR(pr.number, config, cwd); break;
+        case "merge": await mergeRun([], config, cwd); break;
       }
     }
   }
@@ -230,11 +212,15 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
     if (!running) return;
 
     try {
-      const inProgressIssues = await listIssuesWithLabel(LABELS.inProgress, cwd);
-      const inProgressNums = new Set(inProgressIssues.map((i) => i.number));
+      // Fetch all open issues and PRs in two calls — filter locally
+      const allOpenIssues = await listOpenIssues(cwd);
+      const allOpenPRs = await listOpenPRs(cwd);
+
+      const byLabel = (label: string) => allOpenIssues.filter((i) => i.labels.includes(label));
+      const prsByLabel = (label: string) => allOpenPRs.filter((pr) => pr.labels.includes(label));
+      const inProgressNums = new Set(byLabel(LABELS.inProgress).map((i) => i.number));
 
       // Detect unlabeled issues → set needs-triage
-      const allOpenIssues = await listOpenIssues(cwd);
       for (const issue of allOpenIssues) {
         if (issue.labels.includes(LABELS.ignore)) continue;
         if (issue.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX) || ALL_KNOWN_LABELS.has(l as never))) continue;
@@ -243,7 +229,6 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
       }
 
       // Detect unlabeled PRs → set needs-verify
-      const allOpenPRs = await listOpenPRs(cwd);
       for (const pr of allOpenPRs) {
         if (pr.labels.includes(LABELS.ignore)) continue;
         if (pr.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX))) continue;
@@ -252,8 +237,7 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
       }
 
       // Dispatch triage for needs-triage issues
-      const needsTriageIssues = await listIssuesWithLabel(LABELS.needsTriage, cwd);
-      for (const issue of needsTriageIssues) {
+      for (const issue of byLabel(LABELS.needsTriage)) {
         if (inProgressNums.has(issue.number)) continue;
         const jobName = `triage-${issue.number}`;
         if (activeJobs.has(jobName)) continue;
@@ -269,8 +253,7 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
       }
 
       // Dispatch plan-issue for needs-plan issues
-      const needsPlanIssues = await listIssuesWithLabel(LABELS.needsPlan, cwd);
-      for (const issue of needsPlanIssues) {
+      for (const issue of byLabel(LABELS.needsPlan)) {
         if (inProgressNums.has(issue.number)) continue;
         const jobName = `plan-${issue.number}`;
         if (activeJobs.has(jobName)) continue;
@@ -285,10 +268,8 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         });
       }
 
-      // Collect new autofix issues (and retry stuck ones)
-      const autofixIssues = await listIssuesWithLabel(LABELS.autofix, cwd);
-
-      for (const issue of autofixIssues) {
+      // Dispatch fix for autofix issues (and retry stuck ones)
+      for (const issue of byLabel(LABELS.autofix)) {
         if (inProgressNums.has(issue.number)) continue;
         const existingState = await loadState(stateDir, repoName, issue.number);
         const jobName = `fix-${issue.number}`;
@@ -300,9 +281,7 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
             // Leftover triage state — proceed normally
           } else if (existingState.command === "fix-issue") {
             const attempts = existingState.fixAttempts ?? 0;
-            const issueLabels = allOpenIssues.find((i) => i.number === issue.number)?.labels ?? [];
-            if (attempts >= 3 || !issueLabels.includes(LABELS.waiting)) continue;
-            // Stuck fix — remove waiting and retry with escalated model
+            if (attempts >= 3 || !issue.labels.includes(LABELS.waiting)) continue;
             retryModel = "opus";
             log(jobName, `retry stuck fix (attempt ${attempts + 1})`);
             await removeLabel(issue.number, LABELS.waiting, cwd);
@@ -322,17 +301,14 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         });
       }
 
-      // Collect waiting issues with answers → set needs-triage (not fix-issue directly)
-      // Only fetch full issue data for issues whose updatedAt has changed since last poll
-      const waitingIssues = await listIssuesWithLabel(LABELS.waiting, cwd);
+      // Check waiting issues for human replies — only fetch full data for updated ones
+      const waitingIssues = byLabel(LABELS.waiting);
       const updatedWaiting = waitingIssues.filter((i) => issueLastUpdated.get(i.number) !== i.updatedAt);
       for (const i of waitingIssues) issueLastUpdated.set(i.number, i.updatedAt);
       for (const num of issueLastUpdated.keys()) {
         if (!waitingIssues.some((i) => i.number === num)) issueLastUpdated.delete(num);
       }
-      const waitingWithComments = await Promise.all(
-        updatedWaiting.map((i) => getIssue(i.number, cwd))
-      );
+      const waitingWithComments = await Promise.all(updatedWaiting.map((i) => getIssue(i.number, cwd)));
       const answeredNums = findAnsweredIssues(waitingWithComments, "🤖 **flogvit-coder**");
       for (const num of answeredNums) {
         const waitingIssue = waitingIssues.find((i) => i.number === num)!;
@@ -353,63 +329,50 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
       }
 
       // Retry changes-requested and failed PRs
-      for (const label of [LABELS.changesRequested, LABELS.failed] as const) {
-        const prs = await listPRsWithLabel(label, cwd);
-        for (const pr of prs) {
-          if (pr.labels.includes(LABELS.inProgress)) continue;
-          // Skip if already approved — pipeline has superseded the failure
-          if (pr.labels.includes(LABELS.approved)) continue;
-          const issueNum = parsePRIssueNumber(pr.body);
-          if (!issueNum) continue;
-          const state = await loadState(stateDir, repoName, issueNum);
-          const prFixAttempts = state?.prFixAttempts ?? 0;
-          if (prFixAttempts >= 3) {
-            log(`fix-pr-${pr.number}`, `prFixAttempts exhausted, skipping`);
-            continue;
-          }
-          const jobName = `fix-pr-${pr.number}`;
-          if (activeJobs.has(jobName)) continue;
-          const model = prFixAttempts >= 1 ? "opus" : undefined;
-          activeJobs.set(jobName, { label: pr.title, startedAt: Date.now(), stage: "fix-pr" });
-          log(jobName, `fixing PR #${pr.number} (attempt ${prFixAttempts + 1})`);
-          fixPR(pr.number, config, cwd, false, model).then(() => {
-            activeJobs.delete(jobName);
-            log(jobName, `done`);
-          }).catch((err) => {
-            activeJobs.delete(jobName);
-            log(jobName, `error: ${String(err).slice(0, 60)}`);
-          });
+      const retryPRs = allOpenPRs.filter((pr) =>
+        pr.labels.includes(LABELS.changesRequested) || pr.labels.includes(LABELS.failed)
+      );
+      for (const pr of retryPRs) {
+        if (pr.labels.includes(LABELS.inProgress)) continue;
+        if (pr.labels.includes(LABELS.approved)) continue;
+        const issueNum = parsePRIssueNumber(pr.body);
+        if (!issueNum) continue;
+        const state = await loadState(stateDir, repoName, issueNum);
+        const prFixAttempts = state?.prFixAttempts ?? 0;
+        if (prFixAttempts >= 3) {
+          log(`fix-pr-${pr.number}`, `prFixAttempts exhausted, skipping`);
+          continue;
         }
+        const jobName = `fix-pr-${pr.number}`;
+        if (activeJobs.has(jobName)) continue;
+        const model = prFixAttempts >= 1 ? "opus" : undefined;
+        activeJobs.set(jobName, { label: pr.title, startedAt: Date.now(), stage: "fix-pr" });
+        log(jobName, `fixing PR #${pr.number} (attempt ${prFixAttempts + 1})`);
+        fixPR(pr.number, config, cwd, false, model).then(() => {
+          activeJobs.delete(jobName);
+          log(jobName, `done`);
+        }).catch((err) => {
+          activeJobs.delete(jobName);
+          log(jobName, `error: ${String(err).slice(0, 60)}`);
+        });
       }
 
-      // Collect pipeline stage work
+      // Dispatch pipeline stages
       const nextQueue: typeof queue = [];
       for (const stage of PIPELINE_STAGES) {
-        const label = STAGE_LABELS[stage];
-        const prs = await listPRsWithLabel(label, cwd);
-        for (const pr of prs) {
+        for (const pr of prsByLabel(STAGE_LABELS[stage])) {
           if (pr.labels.includes(LABELS.inProgress)) continue;
           const jobName = `${stage}-${pr.number}`;
           if (activeJobs.has(jobName)) continue;
           nextQueue.push({ stage, prTitle: pr.title, prNumber: pr.number });
-
           activeJobs.set(jobName, { label: pr.title, startedAt: Date.now(), stage });
           log(jobName, `starting ${stage} for PR #${pr.number}`);
-
           let stagePromise: Promise<{ success: boolean }> = Promise.resolve({ success: false });
           switch (stage) {
-            case "verify":
-              stagePromise = verifyPR(pr.number, config, cwd);
-              break;
-            case "review":
-              stagePromise = reviewPR(pr.number, config, cwd);
-              break;
-            case "audit":
-              stagePromise = auditPR(pr.number, config, cwd);
-              break;
-            case "merge":
-              stagePromise = mergeRun([], config, cwd).then(() => ({ success: true }));
-              break;
+            case "verify": stagePromise = verifyPR(pr.number, config, cwd); break;
+            case "review": stagePromise = reviewPR(pr.number, config, cwd); break;
+            case "audit": stagePromise = auditPR(pr.number, config, cwd); break;
+            case "merge": stagePromise = mergeRun([], config, cwd).then(() => ({ success: true })); break;
           }
           stagePromise.then(({ success }) => {
             activeJobs.delete(jobName);
@@ -426,9 +389,9 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
     }
   };
 
-  // Poll immediately, then every 15 seconds
+  // Poll immediately, then every 60 seconds
   await poll();
-  const pollInterval = setInterval(poll, 15_000);
+  const pollInterval = setInterval(poll, 60_000);
 
   // Keep alive until SIGINT
   await new Promise<void>((resolve) => {

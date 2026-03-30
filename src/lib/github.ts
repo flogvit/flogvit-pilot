@@ -90,23 +90,26 @@ export async function listIssuesWithLabel(
   return JSON.parse(result);
 }
 
-export async function listOpenIssues(cwd: string): Promise<{ number: number; title: string; labels: string[] }[]> {
-  const result = await $`gh issue list --state open --limit 100 --json number,title,labels`.cwd(cwd).text();
+export async function listOpenIssues(cwd: string): Promise<{ number: number; title: string; labels: string[]; updatedAt: string }[]> {
+  const result = await $`gh issue list --state open --limit 100 --json number,title,labels,updatedAt`.cwd(cwd).text();
   const data = JSON.parse(result);
-  return data.map((i: { number: number; title: string; labels: { name: string }[] }) => ({
+  return data.map((i: { number: number; title: string; labels: { name: string }[]; updatedAt: string }) => ({
     number: i.number,
     title: i.title,
     labels: i.labels.map((l) => l.name),
+    updatedAt: i.updatedAt,
   }));
 }
 
-export async function listOpenPRs(cwd: string): Promise<{ number: number; title: string; labels: string[] }[]> {
-  const result = await $`gh pr list --state open --limit 100 --json number,title,labels`.cwd(cwd).text();
+export async function listOpenPRs(cwd: string): Promise<PR[]> {
+  const result = await $`gh pr list --state open --limit 100 --json number,title,labels,headRefName,body`.cwd(cwd).text();
   const data = JSON.parse(result);
-  return data.map((pr: { number: number; title: string; labels: { name: string }[] }) => ({
+  return data.map((pr: { number: number; title: string; labels: { name: string }[]; headRefName: string; body: string }) => ({
     number: pr.number,
     title: pr.title,
     labels: pr.labels.map((l) => l.name),
+    headBranch: pr.headRefName,
+    body: pr.body ?? "",
   }));
 }
 
