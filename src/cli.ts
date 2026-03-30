@@ -31,6 +31,7 @@ const COMMANDS: Record<string, () => Promise<CommandModule>> = {
   "review-pr": () => import("./commands/review-pr"),
   "audit-pr": () => import("./commands/audit-pr"),
   "pr-review": () => import("./commands/pr-review"),
+  merge: () => import("./commands/merge"),
 };
 
 function parseGlobalFlags(argv: string[]): {
@@ -97,6 +98,7 @@ Commands:
   review-pr <#>       AI code review of a PR → advance to needs-audit
   audit-pr <#>        Security audit of a PR → advance to approved
   pr-review <#>       Review a pull request
+  merge               Merge all approved PRs
 
 Options:
   --tool <name>       Override AI tool (claude, aider)
