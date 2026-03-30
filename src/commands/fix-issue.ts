@@ -109,6 +109,7 @@ export async function fixIssue(
     cwd,
     jobName: `fix-issue-${issueNum}`,
     fallbackApiKey: config.defaults.fallback_api_key,
+    verbose,
     maxTurns: (toolConfig["max-turns"] as number) ?? undefined,
     allowedTools: (toolConfig["allowed-tools"] as string[]) ?? undefined,
   });

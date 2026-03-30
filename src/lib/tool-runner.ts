@@ -3,6 +3,7 @@ export interface ToolRunnerOptions {
   cwd: string;
   jobName?: string;
   fallbackApiKey?: string;
+  verbose?: boolean;
   allowedTools?: string[];
   maxTurns?: number;
 }

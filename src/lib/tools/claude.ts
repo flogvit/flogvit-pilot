@@ -86,7 +86,16 @@ export class ClaudeRunner implements ToolRunner {
           env,
         });
 
-        const output = await new Response(proc.stdout).text();
+        // Stream stdout live when verbose, while still collecting it for parsing
+        const chunks: Buffer[] = [];
+        const reader = proc.stdout.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(Buffer.from(value));
+          if (opts.verbose) process.stderr.write(value);
+        }
+        const output = Buffer.concat(chunks).toString("utf-8");
         const stderr = await new Response(proc.stderr).text();
         const exitCode = await proc.exited;
         const combined = `${output}\n${stderr}`;
