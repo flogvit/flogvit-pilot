@@ -31,9 +31,9 @@ const LABEL_DEFINITIONS = [
   { name: LABELS.approved, description: "flogvit-coder: approved for merge", color: "0e8a16" },
   { name: LABELS.securityIssue, description: "flogvit-coder: security issue found", color: "d73a4a" },
   { name: LABELS.changesRequested, description: "flogvit-coder: review requested changes", color: "fbca04" },
-  { name: "flogvit-coder:needs-triage", description: "flogvit-coder: needs triage evaluation", color: "bfd4f2" },
-  { name: "flogvit-coder:needs-plan", description: "flogvit-coder: needs implementation plan", color: "d4c5f9" },
-  { name: "flogvit-coder:ignore", description: "flogvit-coder: ignore this issue/PR entirely", color: "eeeeee" },
+  { name: LABELS.needsTriage, description: "flogvit-coder: needs triage evaluation", color: "bfd4f2" },
+  { name: LABELS.needsPlan, description: "flogvit-coder: needs implementation plan", color: "d4c5f9" },
+  { name: LABELS.ignore, description: "flogvit-coder: ignore this issue/PR entirely", color: "eeeeee" },
 ];
 
 export function formatIssueComment(
