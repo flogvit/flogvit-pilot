@@ -30,7 +30,7 @@ const BUILTIN_DEFAULTS: Config = {
       "allowed-tools": ["Bash", "Read", "Edit", "Write", "Glob", "Grep"],
     },
     aider: {
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
     },
   },
   commands: {},

@@ -60,13 +60,13 @@ describe("mergeConfigs", () => {
       defaults: { tool: "claude" },
       tools: {
         claude: { "max-turns": 20 },
-        aider: { model: "claude-sonnet-4-20250514" },
+        aider: { model: "claude-sonnet-4-6" },
       },
       commands: {},
     };
     const result = mergeConfigs(global, repo);
     expect(result.tools.claude?.["max-turns"]).toBe(20);
-    expect(result.tools.aider?.model).toBe("claude-sonnet-4-20250514");
+    expect(result.tools.aider?.model).toBe("claude-sonnet-4-6");
   });
 });
 
