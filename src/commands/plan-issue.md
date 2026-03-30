@@ -69,5 +69,5 @@ The plan must follow this structure:
 
 After saving the plan file, end your response with EXACTLY ONE of these on the last line:
 
-`FLOGVIT-CODER:PLAN:READY` — if the plan is complete and self-sufficient (no human choice needed)
-`FLOGVIT-CODER:PLAN:NEEDS-HUMAN: <concise question in Norwegian>` — if a human must choose between real alternatives
+FLOGVIT-CODER:PLAN:READY — if the plan is complete and self-sufficient (no human choice needed)
+FLOGVIT-CODER:PLAN:NEEDS-HUMAN: <concise question in Norwegian> — if a human must choose between real alternatives

@@ -31,7 +31,7 @@ export type TriageVerdict =
 export function parseTriageOutput(output: string): TriageVerdict {
   const lines = output.trim().split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i].trim();
+    const line = lines[i].trim().replace(/^`+|`+$/g, "");
     if (line === "FLOGVIT-CODER:TRIAGE:AUTOFIX") return { verdict: "autofix" };
     if (line === "FLOGVIT-CODER:TRIAGE:NEEDS-PLAN") return { verdict: "needs-plan" };
     if (line.startsWith("FLOGVIT-CODER:TRIAGE:WAITING:")) {

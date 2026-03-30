@@ -35,7 +35,7 @@ export interface ToolOutputResult {
 export function parseToolOutput(output: string): ToolOutputResult {
   const lines = output.trim().split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i].trim();
+    const line = lines[i].trim().replace(/^`+|`+$/g, "");
     if (line.startsWith("FLOGVIT-CODER:DONE:")) {
       return { status: "done", message: line.replace("FLOGVIT-CODER:DONE:", "") };
     }

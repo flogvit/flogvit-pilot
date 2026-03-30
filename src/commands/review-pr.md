@@ -23,7 +23,7 @@ Review the diff above for:
 ## Rules
 
 - Be concise. Focus only on meaningful issues, not style nits.
-- If the PR is acceptable (no blocking issues), end your response with EXACTLY this on the last line:
-  `FLOGVIT-CODER:REVIEW:APPROVE: <one sentence why it looks good>`
-- If the PR has issues that should be fixed before merging, end your response with EXACTLY this on the last line:
-  `FLOGVIT-CODER:REVIEW:CHANGES-REQUESTED: <one sentence describing the main concern>`
+- If the PR is acceptable (no blocking issues), end your response with EXACTLY this on the last line (no backticks):
+  FLOGVIT-CODER:REVIEW:APPROVE: <one sentence why it looks good>
+- If the PR has issues that should be fixed before merging, end your response with EXACTLY this on the last line (no backticks):
+  FLOGVIT-CODER:REVIEW:CHANGES-REQUESTED: <one sentence describing the main concern>

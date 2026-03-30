@@ -27,7 +27,7 @@ export type PlanVerdict =
 export function parsePlanOutput(output: string): PlanVerdict {
   const lines = output.trim().split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i].trim();
+    const line = lines[i].trim().replace(/^`+|`+$/g, "");
     if (line === "FLOGVIT-CODER:PLAN:READY") return { verdict: "ready" };
     if (line.startsWith("FLOGVIT-CODER:PLAN:NEEDS-HUMAN:")) {
       return {
