@@ -101,6 +101,8 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
     const prs = await listPRsWithLabel(label, cwd);
     for (const pr of prs) {
       if (pr.labels.includes(LABELS.inProgress)) continue;
+      // Skip if already approved — pipeline has superseded the failure
+      if (pr.labels.includes(LABELS.approved)) continue;
       const issueNum = parsePRIssueNumber(pr.body);
       if (!issueNum) continue;
       const state = await loadState(stateDir, repoName, issueNum);
@@ -355,6 +357,8 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         const prs = await listPRsWithLabel(label, cwd);
         for (const pr of prs) {
           if (pr.labels.includes(LABELS.inProgress)) continue;
+          // Skip if already approved — pipeline has superseded the failure
+          if (pr.labels.includes(LABELS.approved)) continue;
           const issueNum = parsePRIssueNumber(pr.body);
           if (!issueNum) continue;
           const state = await loadState(stateDir, repoName, issueNum);

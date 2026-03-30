@@ -44,6 +44,8 @@ export async function verifyPR(
   if (!repoContext.testCommand) {
     logger.summary(`PR #${prNumber}: no test command found, skipping verify`);
     await removePRLabel(prNumber, LABELS.needsVerify, cwd);
+    await removePRLabel(prNumber, LABELS.changesRequested, cwd);
+    await removePRLabel(prNumber, LABELS.failed, cwd);
     await addPRLabel(prNumber, LABELS.needsReview, cwd);
     await removeWorktree(wtPath, cwd);
     process.off("SIGINT", cleanup);
@@ -77,6 +79,8 @@ export async function verifyPR(
     return { success: false };
   }
 
+  await removePRLabel(prNumber, LABELS.changesRequested, cwd);
+  await removePRLabel(prNumber, LABELS.failed, cwd);
   await addPRLabel(prNumber, LABELS.needsReview, cwd);
   logger.summary(`PR #${prNumber}: tests passed`);
   return { success: true };

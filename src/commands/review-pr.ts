@@ -86,6 +86,8 @@ export async function reviewPR(
     const line = lines[i].trim();
     if (line.startsWith("FLOGVIT-CODER:REVIEW:APPROVE:")) {
       const reason = line.replace("FLOGVIT-CODER:REVIEW:APPROVE:", "").trim();
+      await removePRLabel(prNumber, LABELS.changesRequested, cwd);
+      await removePRLabel(prNumber, LABELS.failed, cwd);
       await addPRLabel(prNumber, LABELS.needsAudit, cwd);
       logger.summary(`PR #${prNumber}: review approved — ${reason}`);
       return { success: true };
