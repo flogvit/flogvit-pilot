@@ -13,6 +13,9 @@ export const LABELS = {
   approved: "flogvit-coder:approved",
   securityIssue: "flogvit-coder:security-issue",
   changesRequested: "flogvit-coder:changes-requested",
+  needsTriage: "flogvit-coder:needs-triage",
+  needsPlan: "flogvit-coder:needs-plan",
+  ignore: "flogvit-coder:ignore",
 } as const;
 
 const LABEL_DEFINITIONS = [
@@ -28,6 +31,9 @@ const LABEL_DEFINITIONS = [
   { name: LABELS.approved, description: "flogvit-coder: approved for merge", color: "0e8a16" },
   { name: LABELS.securityIssue, description: "flogvit-coder: security issue found", color: "d73a4a" },
   { name: LABELS.changesRequested, description: "flogvit-coder: review requested changes", color: "fbca04" },
+  { name: "flogvit-coder:needs-triage", description: "flogvit-coder: needs triage evaluation", color: "bfd4f2" },
+  { name: "flogvit-coder:needs-plan", description: "flogvit-coder: needs implementation plan", color: "d4c5f9" },
+  { name: "flogvit-coder:ignore", description: "flogvit-coder: ignore this issue/PR entirely", color: "eeeeee" },
 ];
 
 export function formatIssueComment(
@@ -82,6 +88,16 @@ export async function listIssuesWithLabel(
 ): Promise<{ number: number; title: string }[]> {
   const result = await $`gh issue list --label ${label} --state open --limit 50 --json number,title`.cwd(cwd).text();
   return JSON.parse(result);
+}
+
+export async function listOpenIssues(cwd: string): Promise<{ number: number; title: string; labels: string[] }[]> {
+  const result = await $`gh issue list --state open --limit 100 --json number,title,labels`.cwd(cwd).text();
+  const data = JSON.parse(result);
+  return data.map((i: { number: number; title: string; labels: { name: string }[] }) => ({
+    number: i.number,
+    title: i.title,
+    labels: i.labels.map((l) => l.name),
+  }));
 }
 
 export async function addLabel(

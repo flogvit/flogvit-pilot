@@ -12,6 +12,12 @@ export interface WorkState {
     body: string;
   };
   createdAt: string;
+  // Triage and retry loop prevention (all optional for backward compatibility)
+  triageCount?: number;
+  fixAttempts?: number;
+  prFixAttempts?: number;
+  planGenerated?: boolean;
+  planFile?: string;
 }
 
 function statePath(stateDir: string, repoName: string, issueNum: number): string {

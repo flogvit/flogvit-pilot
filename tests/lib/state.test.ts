@@ -45,6 +45,32 @@ describe("state", () => {
     expect(loaded).toBeNull();
   });
 
+  test("saves and loads new triage/retry fields", async () => {
+    const state: WorkState = {
+      issueNumber: 7,
+      command: "triage",
+      branch: null,
+      agentSummary: "",
+      question: null,
+      issueData: { title: "Vague issue", body: "" },
+      createdAt: "2026-03-30T12:00:00Z",
+      triageCount: 1,
+      fixAttempts: 2,
+      prFixAttempts: 0,
+      planGenerated: true,
+      planFile: "docs/superpowers/plans/issue-7-vague-issue.md",
+    };
+
+    await saveState(stateDir, "repo", 7, state);
+    const loaded = await loadState(stateDir, "repo", 7);
+
+    expect(loaded!.triageCount).toBe(1);
+    expect(loaded!.fixAttempts).toBe(2);
+    expect(loaded!.prFixAttempts).toBe(0);
+    expect(loaded!.planGenerated).toBe(true);
+    expect(loaded!.planFile).toBe("docs/superpowers/plans/issue-7-vague-issue.md");
+  });
+
   test("clearState removes the state file", async () => {
     const state: WorkState = {
       issueNumber: 10,
