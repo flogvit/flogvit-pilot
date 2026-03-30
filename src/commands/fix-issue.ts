@@ -70,6 +70,10 @@ export async function fixIssue(
   const repoContext = await gatherRepoContext(cwd);
   const logger = new Logger({ logDir, repoName: repoContext.repoName, command: "fix-issue", verbose });
 
+  // Load existing state to track attempt count across retries
+  const existingFixState = await loadState(stateDir, repoContext.repoName, issueNum);
+  const fixAttempts = (existingFixState?.fixAttempts ?? 0) + 1;
+
   // Fetch issue
   const issue = await getIssue(issueNum, cwd);
   await addLabel(issueNum, LABELS.inProgress, cwd);
@@ -155,6 +159,7 @@ export async function fixIssue(
       question,
       issueData: { title: issue.title, body: issue.body },
       createdAt: new Date().toISOString(),
+      fixAttempts,
     });
 
     await commentOnIssue(

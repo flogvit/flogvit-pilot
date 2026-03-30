@@ -57,27 +57,31 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
     await planIssue(issue.number, config, cwd);
   }
 
-  // 4. Check for new autofix issues
+  // 4. Check for new autofix issues (and retry stuck ones)
   const autofixIssues = await listIssuesWithLabel(LABELS.autofix, cwd);
   for (const issue of autofixIssues) {
     if (inProgressNums.has(issue.number)) continue;
     const existingState = await loadState(stateDir, repoName, issue.number);
-    // Skip only if a fix (or other non-triage command) is already in progress.
-    // Triage leaves behind state with command:"triage" — that should not block dispatch.
-    if (existingState && existingState.command !== "triage") continue;
-    const fixAttempts = 1;
-    await saveState(stateDir, repoName, issue.number, {
-      issueNumber: issue.number,
-      command: "fix-issue",
-      branch: null,
-      agentSummary: "",
-      question: null,
-      issueData: { title: issue.title, body: "" },
-      createdAt: new Date().toISOString(),
-      fixAttempts,
-    });
-    console.log(`Found new autofix issue #${issue.number}: ${issue.title}`);
-    await fixIssue(issue.number, config, cwd);
+
+    let retryModel: string | undefined;
+    if (existingState) {
+      if (existingState.command === "triage") {
+        // Leftover triage state — proceed normally
+      } else if (existingState.command === "fix-issue") {
+        const attempts = existingState.fixAttempts ?? 0;
+        const issueLabels = allOpenIssues.find((i) => i.number === issue.number)?.labels ?? [];
+        if (attempts >= 3 || !issueLabels.includes(LABELS.waiting)) continue;
+        // Stuck fix — remove waiting and retry with escalated model
+        retryModel = "opus";
+        console.log(`Retrying stuck fix for issue #${issue.number} (attempt ${attempts + 1})`);
+        await removeLabel(issue.number, LABELS.waiting, cwd);
+      } else {
+        continue;
+      }
+    }
+
+    console.log(`${retryModel ? "Re-fixing" : "Fixing"} issue #${issue.number}: ${issue.title}`);
+    await fixIssue(issue.number, config, cwd, false, retryModel);
   }
 
   // 5. Check for answered waiting issues → set needs-triage
@@ -279,30 +283,35 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         });
       }
 
-      // Collect new autofix issues
+      // Collect new autofix issues (and retry stuck ones)
       const autofixIssues = await listIssuesWithLabel(LABELS.autofix, cwd);
 
       for (const issue of autofixIssues) {
         if (inProgressNums.has(issue.number)) continue;
         const existingState = await loadState(stateDir, repoName, issue.number);
-        // Skip only if a fix (or other non-triage command) is already in progress.
-        // Triage leaves behind state with command:"triage" — that should not block dispatch.
-        if (existingState && existingState.command !== "triage") continue;
         const jobName = `fix-${issue.number}`;
         if (activeJobs.has(jobName)) continue;
-        await saveState(stateDir, repoName, issue.number, {
-          issueNumber: issue.number,
-          command: "fix-issue",
-          branch: null,
-          agentSummary: "",
-          question: null,
-          issueData: { title: issue.title, body: "" },
-          createdAt: new Date().toISOString(),
-          fixAttempts: 1,
-        });
+
+        let retryModel: string | undefined;
+        if (existingState) {
+          if (existingState.command === "triage") {
+            // Leftover triage state — proceed normally
+          } else if (existingState.command === "fix-issue") {
+            const attempts = existingState.fixAttempts ?? 0;
+            const issueLabels = allOpenIssues.find((i) => i.number === issue.number)?.labels ?? [];
+            if (attempts >= 3 || !issueLabels.includes(LABELS.waiting)) continue;
+            // Stuck fix — remove waiting and retry with escalated model
+            retryModel = "opus";
+            log(jobName, `retry stuck fix (attempt ${attempts + 1})`);
+            await removeLabel(issue.number, LABELS.waiting, cwd);
+          } else {
+            continue;
+          }
+        }
+
         activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "fix" });
-        log(jobName, `starting fix for issue #${issue.number}`);
-        fixIssue(issue.number, config, cwd).then(() => {
+        log(jobName, retryModel ? `retrying fix for issue #${issue.number}` : `starting fix for issue #${issue.number}`);
+        fixIssue(issue.number, config, cwd, false, retryModel).then(() => {
           activeJobs.delete(jobName);
           log(jobName, `done`);
         }).catch((err) => {
