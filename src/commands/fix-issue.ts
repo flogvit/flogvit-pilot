@@ -169,7 +169,9 @@ export async function fixIssue(
   }
 
   // Commit, push, create PR
+  // Exclude .claude/worktrees — Claude Code may create worktrees during the run
   await $`git add -A`.cwd(cwd);
+  await $`git restore --staged .claude/worktrees`.cwd(cwd).nothrow();
   await $`git commit -m ${`fix: ${issue.title} (fixes #${issueNum})`}`.cwd(cwd);
   await $`git push -u origin ${branch}`.cwd(cwd);
 
