@@ -12,6 +12,10 @@ export function worktreePath(homeDir: string, repoName: string, jobName: string)
 
 export async function createWorktree(path: string, branch: string, cwd: string): Promise<void> {
   await mkdir(join(path, ".."), { recursive: true });
+  // Clean up stale worktree at this path if it exists
+  await $`git worktree remove ${path} --force`.cwd(cwd).nothrow();
+  await rm(path, { recursive: true, force: true });
+  await $`git worktree prune`.cwd(cwd).nothrow();
   const branchExists = await $`git show-ref --verify --quiet refs/heads/${branch}`.cwd(cwd).nothrow();
   if (branchExists.exitCode === 0) {
     await $`git worktree add ${path} ${branch}`.cwd(cwd);
