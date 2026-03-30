@@ -31,3 +31,38 @@ describe("findAnsweredIssues", () => {
     expect(result).toEqual([]);
   });
 });
+
+describe("unlabeled issue detection", () => {
+  test("identifies issues with no flogvit-coder labels", () => {
+    const FLOGVIT_CODER_PREFIX = "flogvit-coder:";
+    const issues = [
+      { number: 1, labels: [] },
+      { number: 2, labels: ["bug"] },
+      { number: 3, labels: ["flogvit-coder:needs-triage"] },
+      { number: 4, labels: ["flogvit-coder:ignore"] },
+      { number: 5, labels: ["autofix"] },
+    ];
+
+    const unlabeled = issues.filter(
+      (i) =>
+        !i.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX)) &&
+        !i.labels.includes("flogvit-coder:ignore")
+    );
+
+    expect(unlabeled.map((i) => i.number)).toEqual([1, 2, 5]);
+  });
+
+  test("excludes issues with flogvit-coder:ignore label", () => {
+    const FLOGVIT_CODER_PREFIX = "flogvit-coder:";
+    const issues = [
+      { number: 1, labels: ["flogvit-coder:ignore"] },
+      { number: 2, labels: [] },
+    ];
+    const unlabeled = issues.filter(
+      (i) =>
+        !i.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX)) &&
+        !i.labels.includes("flogvit-coder:ignore")
+    );
+    expect(unlabeled.map((i) => i.number)).toEqual([2]);
+  });
+});

@@ -1,8 +1,11 @@
 import { resolve, basename } from "path";
 import { homedir } from "os";
 import type { Config } from "../lib/config";
-import { listIssuesWithLabel, listPRsWithLabel, getIssue, removeLabel, LABELS } from "../lib/github";
-import { loadState } from "../lib/state";
+import { listIssuesWithLabel, listPRsWithLabel, listOpenIssues, getIssue, removeLabel, addLabel, LABELS } from "../lib/github";
+import { loadState, saveState } from "../lib/state";
+import { triageIssue } from "./triage";
+import { planIssue } from "./plan-issue";
+import { fixPR, parsePRIssueNumber } from "./fix-pr";
 import { fixIssue } from "./fix-issue";
 import { verifyPR } from "./verify";
 import { reviewPR } from "./review-pr";
@@ -17,37 +20,92 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
   const repoName = basename(cwd);
   const homeDir = process.env.HOME ?? homedir();
   const stateDir = resolve(homeDir, ".flogvit-coder", "state");
+  const FLOGVIT_CODER_PREFIX = "flogvit-coder:";
 
-  // 1. Check for new autofix issues
-  const autofixIssues = await listIssuesWithLabel(LABELS.autofix, cwd);
+  // 1. Detect unlabeled issues → set needs-triage (skip ignored issues)
+  const allOpenIssues = await listOpenIssues(cwd);
+  for (const issue of allOpenIssues) {
+    if (issue.labels.includes(LABELS.ignore)) continue;
+    if (issue.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX))) continue;
+    console.log(`Found unlabeled issue #${issue.number}: ${issue.title} → needs-triage`);
+    await addLabel(issue.number, LABELS.needsTriage, cwd);
+  }
+
+  // 2. Dispatch triage for needs-triage issues
   const inProgressIssues = await listIssuesWithLabel(LABELS.inProgress, cwd);
   const inProgressNums = new Set(inProgressIssues.map((i) => i.number));
 
+  const needsTriageIssues = await listIssuesWithLabel(LABELS.needsTriage, cwd);
+  for (const issue of needsTriageIssues) {
+    if (inProgressNums.has(issue.number)) continue;
+    console.log(`Triaging issue #${issue.number}: ${issue.title}`);
+    await triageIssue(issue.number, config, cwd);
+  }
+
+  // 3. Dispatch plan-issue for needs-plan issues
+  const needsPlanIssues = await listIssuesWithLabel(LABELS.needsPlan, cwd);
+  for (const issue of needsPlanIssues) {
+    if (inProgressNums.has(issue.number)) continue;
+    console.log(`Planning issue #${issue.number}: ${issue.title}`);
+    await planIssue(issue.number, config, cwd);
+  }
+
+  // 4. Check for new autofix issues
+  const autofixIssues = await listIssuesWithLabel(LABELS.autofix, cwd);
   for (const issue of autofixIssues) {
     if (inProgressNums.has(issue.number)) continue;
     const existingState = await loadState(stateDir, repoName, issue.number);
     if (existingState) continue;
+    const fixAttempts = 1;
+    await saveState(stateDir, repoName, issue.number, {
+      issueNumber: issue.number,
+      command: "fix-issue",
+      branch: null,
+      agentSummary: "",
+      question: null,
+      issueData: { title: issue.title, body: "" },
+      createdAt: new Date().toISOString(),
+      fixAttempts,
+    });
     console.log(`Found new autofix issue #${issue.number}: ${issue.title}`);
     await fixIssue(issue.number, config, cwd);
   }
 
-  // 2. Check for answered waiting issues
+  // 5. Check for answered waiting issues → set needs-triage
   const waitingIssues = await listIssuesWithLabel(LABELS.waiting, cwd);
   const waitingWithComments = await Promise.all(
     waitingIssues.map((i) => getIssue(i.number, cwd))
   );
   const answeredNums = findAnsweredIssues(waitingWithComments, "🤖 **flogvit-coder**");
   for (const num of answeredNums) {
-    const issue = waitingIssues.find((i) => i.number === num)!;
-    console.log(`Issue #${num} has been answered, resuming...`);
+    console.log(`Issue #${num} has been answered, setting needs-triage...`);
     await removeLabel(num, LABELS.waiting, cwd);
-    await fixIssue(num, config, cwd);
+    await addLabel(num, LABELS.needsTriage, cwd);
   }
 
-  // 3. Dispatch pipeline stages
-  for (const stage of PIPELINE_STAGES) {
-    const label = STAGE_LABELS[stage];
+  // 6. Retry changes-requested and failed PRs with fix-pr
+  for (const label of [LABELS.changesRequested, LABELS.failed] as const) {
     const prs = await listPRsWithLabel(label, cwd);
+    for (const pr of prs) {
+      if (pr.labels.includes(LABELS.inProgress)) continue;
+      const issueNum = parsePRIssueNumber(pr.body);
+      if (!issueNum) continue;
+      const state = await loadState(stateDir, repoName, issueNum);
+      const prFixAttempts = state?.prFixAttempts ?? 0;
+      if (prFixAttempts >= 3) {
+        console.log(`PR #${pr.number}: prFixAttempts exhausted, skipping`);
+        continue;
+      }
+      const model = prFixAttempts >= 1 ? "opus" : undefined;
+      console.log(`Fixing ${label} PR #${pr.number} (attempt ${prFixAttempts + 1})`);
+      await fixPR(pr.number, config, cwd, false, model);
+    }
+  }
+
+  // 7. Dispatch pipeline stages
+  for (const stage of PIPELINE_STAGES) {
+    const stageLabel = STAGE_LABELS[stage];
+    const prs = await listPRsWithLabel(stageLabel, cwd);
 
     for (const pr of prs) {
       // Skip if already in-progress
@@ -151,10 +209,53 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
     if (!running) return;
 
     try {
-      // Collect new autofix issues
-      const autofixIssues = await listIssuesWithLabel(LABELS.autofix, cwd);
       const inProgressIssues = await listIssuesWithLabel(LABELS.inProgress, cwd);
       const inProgressNums = new Set(inProgressIssues.map((i) => i.number));
+
+      // Detect unlabeled issues → set needs-triage
+      const allOpenIssues = await listOpenIssues(cwd);
+      for (const issue of allOpenIssues) {
+        if (issue.labels.includes(LABELS.ignore)) continue;
+        if (issue.labels.some((l) => l.startsWith("flogvit-coder:"))) continue;
+        await addLabel(issue.number, LABELS.needsTriage, cwd);
+      }
+
+      // Dispatch triage for needs-triage issues
+      const needsTriageIssues = await listIssuesWithLabel(LABELS.needsTriage, cwd);
+      for (const issue of needsTriageIssues) {
+        if (inProgressNums.has(issue.number)) continue;
+        const jobName = `triage-${issue.number}`;
+        if (activeJobs.has(jobName)) continue;
+        activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "triage" });
+        log(jobName, `triaging issue #${issue.number}`);
+        triageIssue(issue.number, config, cwd).then(() => {
+          activeJobs.delete(jobName);
+          log(jobName, `done`);
+        }).catch((err) => {
+          activeJobs.delete(jobName);
+          log(jobName, `error: ${String(err).slice(0, 60)}`);
+        });
+      }
+
+      // Dispatch plan-issue for needs-plan issues
+      const needsPlanIssues = await listIssuesWithLabel(LABELS.needsPlan, cwd);
+      for (const issue of needsPlanIssues) {
+        if (inProgressNums.has(issue.number)) continue;
+        const jobName = `plan-${issue.number}`;
+        if (activeJobs.has(jobName)) continue;
+        activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "plan" });
+        log(jobName, `planning issue #${issue.number}`);
+        planIssue(issue.number, config, cwd).then(() => {
+          activeJobs.delete(jobName);
+          log(jobName, `done`);
+        }).catch((err) => {
+          activeJobs.delete(jobName);
+          log(jobName, `error: ${String(err).slice(0, 60)}`);
+        });
+      }
+
+      // Collect new autofix issues
+      const autofixIssues = await listIssuesWithLabel(LABELS.autofix, cwd);
 
       for (const issue of autofixIssues) {
         if (inProgressNums.has(issue.number)) continue;
@@ -173,7 +274,7 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         });
       }
 
-      // Collect waiting issues with answers
+      // Collect waiting issues with answers → set needs-triage (not fix-issue directly)
       const waitingIssues = await listIssuesWithLabel(LABELS.waiting, cwd);
       const waitingWithComments = await Promise.all(
         waitingIssues.map((i) => getIssue(i.number, cwd))
@@ -181,13 +282,13 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
       const answeredNums = findAnsweredIssues(waitingWithComments, "🤖 **flogvit-coder**");
       for (const num of answeredNums) {
         const waitingIssue = waitingIssues.find((i) => i.number === num)!;
-        const jobName = `resume-${num}`;
+        const jobName = `retriage-${num}`;
         if (activeJobs.has(jobName)) continue;
-        activeJobs.set(jobName, { label: waitingIssue.title, startedAt: Date.now(), stage: "fix" });
-        log(jobName, `resuming issue #${num}`);
+        activeJobs.set(jobName, { label: waitingIssue.title, startedAt: Date.now(), stage: "triage" });
+        log(jobName, `re-triaging answered issue #${num}`);
         (async () => {
           await removeLabel(num, LABELS.waiting, cwd);
-          await fixIssue(num, config, cwd);
+          await addLabel(num, LABELS.needsTriage, cwd);
         })().then(() => {
           activeJobs.delete(jobName);
           log(jobName, `done`);
@@ -195,6 +296,31 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
           activeJobs.delete(jobName);
           log(jobName, `error: ${String(err).slice(0, 60)}`);
         });
+      }
+
+      // Retry changes-requested and failed PRs
+      for (const label of [LABELS.changesRequested, LABELS.failed] as const) {
+        const prs = await listPRsWithLabel(label, cwd);
+        for (const pr of prs) {
+          if (pr.labels.includes(LABELS.inProgress)) continue;
+          const issueNum = parsePRIssueNumber(pr.body);
+          if (!issueNum) continue;
+          const state = await loadState(stateDir, repoName, issueNum);
+          const prFixAttempts = state?.prFixAttempts ?? 0;
+          if (prFixAttempts >= 3) continue;
+          const jobName = `fix-pr-${pr.number}`;
+          if (activeJobs.has(jobName)) continue;
+          const model = prFixAttempts >= 1 ? "opus" : undefined;
+          activeJobs.set(jobName, { label: pr.title, startedAt: Date.now(), stage: "fix-pr" });
+          log(jobName, `fixing PR #${pr.number} (attempt ${prFixAttempts + 1})`);
+          fixPR(pr.number, config, cwd, false, model).then(() => {
+            activeJobs.delete(jobName);
+            log(jobName, `done`);
+          }).catch((err) => {
+            activeJobs.delete(jobName);
+            log(jobName, `error: ${String(err).slice(0, 60)}`);
+          });
+        }
       }
 
       // Collect pipeline stage work
