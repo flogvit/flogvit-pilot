@@ -140,6 +140,9 @@ interface ActiveJob {
 const FLOGVIT_CODER_PREFIX = "flogvit-coder:";
 const ALL_KNOWN_LABELS = new Set(Object.values(LABELS));
 
+// Cache of last-seen updatedAt per waiting issue — avoids fetching full issue on every poll
+const issueLastUpdated = new Map<number, string>();
+
 const activeJobs = new Map<string, ActiveJob>();
 const recentLogs: string[] = [];
 const MAX_LOGS = 8;
@@ -287,9 +290,15 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
       }
 
       // Collect waiting issues with answers → set needs-triage (not fix-issue directly)
+      // Only fetch full issue data for issues whose updatedAt has changed since last poll
       const waitingIssues = await listIssuesWithLabel(LABELS.waiting, cwd);
+      const updatedWaiting = waitingIssues.filter((i) => issueLastUpdated.get(i.number) !== i.updatedAt);
+      for (const i of waitingIssues) issueLastUpdated.set(i.number, i.updatedAt);
+      for (const num of issueLastUpdated.keys()) {
+        if (!waitingIssues.some((i) => i.number === num)) issueLastUpdated.delete(num);
+      }
       const waitingWithComments = await Promise.all(
-        waitingIssues.map((i) => getIssue(i.number, cwd))
+        updatedWaiting.map((i) => getIssue(i.number, cwd))
       );
       const answeredNums = findAnsweredIssues(waitingWithComments, "🤖 **flogvit-coder**");
       for (const num of answeredNums) {

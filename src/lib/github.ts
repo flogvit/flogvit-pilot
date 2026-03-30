@@ -85,8 +85,8 @@ export async function getIssue(issueNum: number, cwd: string): Promise<Issue> {
 export async function listIssuesWithLabel(
   label: string,
   cwd: string
-): Promise<{ number: number; title: string }[]> {
-  const result = await $`gh issue list --label ${label} --state open --limit 50 --json number,title`.cwd(cwd).text();
+): Promise<{ number: number; title: string; updatedAt: string }[]> {
+  const result = await $`gh issue list --label ${label} --state open --limit 50 --json number,title,updatedAt`.cwd(cwd).text();
   return JSON.parse(result);
 }
 
