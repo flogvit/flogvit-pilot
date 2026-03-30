@@ -58,7 +58,6 @@ export async function triageIssue(
 
   // Hard limit: if already triaged twice, escalate to human
   if (triageCount > 2) {
-    const issue = await getIssue(issueNum, cwd);
     await removeLabel(issueNum, LABELS.needsTriage, cwd);
     await addLabel(issueNum, LABELS.waiting, cwd);
     await commentOnIssue(
@@ -73,7 +72,7 @@ export async function triageIssue(
         branch: null,
         agentSummary: "",
         question: null,
-        issueData: { title: issue.title, body: issue.body },
+        issueData: existingState!.issueData,
         createdAt: new Date().toISOString(),
       }),
       triageCount,
@@ -88,8 +87,8 @@ export async function triageIssue(
   if (existingState?.planFile) {
     try {
       existingPlan = await readFile(resolve(cwd, existingState.planFile), "utf-8");
-    } catch {
-      // Plan file may not exist yet
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
   }
 
