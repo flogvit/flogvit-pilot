@@ -122,17 +122,40 @@ export async function fixIssue(
   const agentLogFile = logger.getLogFile().replace(".log", "-agent.log");
   await mkdir(resolve(agentLogFile, ".."), { recursive: true });
 
-  const result = await tool.run({
-    prompt,
-    cwd: wtPath,
-    jobName: `fix-issue-${issueNum}`,
-    fallbackApiKey: config.defaults.fallback_api_key,
-    verbose,
-    model,
-    onChunk: (chunk) => appendFile(agentLogFile, chunk).catch(() => {}),
-    maxTurns: (toolConfig["max-turns"] as number) ?? undefined,
-    allowedTools: (toolConfig["allowed-tools"] as string[]) ?? undefined,
-  });
+  let result: Awaited<ReturnType<typeof tool.run>>;
+  try {
+    result = await tool.run({
+      prompt,
+      cwd: wtPath,
+      jobName: `fix-issue-${issueNum}`,
+      fallbackApiKey: config.defaults.fallback_api_key,
+      verbose,
+      model,
+      onChunk: (chunk) => appendFile(agentLogFile, chunk).catch(() => {}),
+      maxTurns: (toolConfig["max-turns"] as number) ?? undefined,
+      allowedTools: (toolConfig["allowed-tools"] as string[]) ?? undefined,
+    });
+  } catch (err) {
+    // Tool crashed (e.g. max turns, network error) — clean up and mark as stuck
+    await removeWorktree(wtPath, cwd).catch(() => {});
+    await removeLabel(issueNum, LABELS.inProgress, cwd).catch(() => {});
+    process.off("SIGINT", cleanup);
+    process.off("SIGTERM", cleanup);
+    await saveState(stateDir, repoContext.repoName, issueNum, {
+      issueNumber: issueNum,
+      command: "fix-issue",
+      branch: null,
+      agentSummary: "",
+      question: null,
+      issueData: { title: issue.title, body: issue.body },
+      createdAt: new Date().toISOString(),
+      fixAttempts,
+    });
+    await addLabel(issueNum, LABELS.waiting, cwd);
+    await commentOnIssue(issueNum, formatIssueComment("waiting", `Agent krasjet (${String(err).slice(0, 120)}). Prøver igjen automatisk.`), cwd);
+    logger.summary(`Issue #${issueNum}: tool crashed — ${String(err).slice(0, 120)}`);
+    return { success: false };
+  }
 
   logger.detail(result.output);
   await logger.flush();

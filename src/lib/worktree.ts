@@ -12,7 +12,12 @@ export function worktreePath(homeDir: string, repoName: string, jobName: string)
 
 export async function createWorktree(path: string, branch: string, cwd: string): Promise<void> {
   await mkdir(join(path, ".."), { recursive: true });
-  await $`git worktree add ${path} -b ${branch}`.cwd(cwd);
+  const branchExists = await $`git show-ref --verify --quiet refs/heads/${branch}`.cwd(cwd).nothrow();
+  if (branchExists.exitCode === 0) {
+    await $`git worktree add ${path} ${branch}`.cwd(cwd);
+  } else {
+    await $`git worktree add ${path} -b ${branch}`.cwd(cwd);
+  }
 }
 
 export async function createWorktreeFromRemote(path: string, branch: string, cwd: string): Promise<void> {

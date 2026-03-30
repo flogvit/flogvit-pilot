@@ -1,7 +1,7 @@
 import { resolve, basename } from "path";
 import { homedir } from "os";
 import type { Config } from "../lib/config";
-import { listOpenIssues, listOpenPRs, getIssue, removeLabel, addLabel, addPRLabel, LABELS } from "../lib/github";
+import { listOpenIssues, listOpenPRs, getIssue, removeLabel, addLabel, addPRLabel, removePRLabel, LABELS } from "../lib/github";
 import { loadState, saveState } from "../lib/state";
 import { triageIssue } from "./triage";
 import { planIssue } from "./plan-issue";
@@ -388,6 +388,22 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
       log("poll", `error: ${String(err).slice(0, 80)}`);
     }
   };
+
+  // On startup, remove orphaned in-progress labels (no active jobs in this session)
+  const startupIssues = await listOpenIssues(cwd);
+  const startupPRs = await listOpenPRs(cwd);
+  for (const issue of startupIssues) {
+    if (issue.labels.includes(LABELS.inProgress)) {
+      log(`startup`, `removing orphaned in-progress from issue #${issue.number}`);
+      await removeLabel(issue.number, LABELS.inProgress, cwd).catch(() => {});
+    }
+  }
+  for (const pr of startupPRs) {
+    if (pr.labels.includes(LABELS.inProgress)) {
+      log(`startup`, `removing orphaned in-progress from PR #${pr.number}`);
+      await removePRLabel(pr.number, LABELS.inProgress, cwd).catch(() => {});
+    }
+  }
 
   // Poll immediately, then every 60 seconds
   await poll();
