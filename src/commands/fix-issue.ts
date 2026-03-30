@@ -99,6 +99,8 @@ export async function fixIssue(
   const result = await tool.run({
     prompt,
     cwd,
+    jobName: `fix-issue-${issueNum}`,
+    fallbackApiKey: config.defaults.fallback_api_key,
     maxTurns: (toolConfig["max-turns"] as number) ?? undefined,
     allowedTools: (toolConfig["allowed-tools"] as string[]) ?? undefined,
   });

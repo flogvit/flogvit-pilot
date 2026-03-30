@@ -1,6 +1,8 @@
 export interface ToolRunnerOptions {
   prompt: string;
   cwd: string;
+  jobName?: string;
+  fallbackApiKey?: string;
   allowedTools?: string[];
   maxTurns?: number;
 }

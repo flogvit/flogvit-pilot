@@ -14,6 +14,7 @@ export interface CommandConfig {
 export interface Config {
   defaults: {
     tool: string;
+    fallback_api_key?: string;
   };
   tools: Record<string, ToolConfig>;
   commands: Record<string, CommandConfig>;
