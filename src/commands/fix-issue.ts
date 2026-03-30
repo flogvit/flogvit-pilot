@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { resolve, dirname, basename } from "path";
 import { fileURLToPath } from "url";
-import { mkdir, appendFile } from "fs/promises";
+import { mkdir, appendFile, unlink } from "fs/promises";
 import { homedir } from "os";
 import type { Config } from "../lib/config";
 import { resolveToolForCommand } from "../lib/config";
@@ -22,7 +22,7 @@ import {
 import { createWorktree, removeWorktree, worktreePath } from "../lib/worktree";
 import { gatherRepoContext } from "../lib/context";
 import { loadTemplate, renderTemplate } from "../lib/template";
-import { saveState, clearState } from "../lib/state";
+import { saveState, loadState, clearState } from "../lib/state";
 import { Logger } from "../lib/logger";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -170,6 +170,13 @@ export async function fixIssue(
   if (!hasChanges) {
     await removeLabel(issueNum, LABELS.inProgress, cwd);
     await removeWorktree(wtPath, cwd);
+    // Delete plan file if exists
+    const noChangesState = await loadState(stateDir, repoContext.repoName, issueNum);
+    if (noChangesState?.planFile) {
+      await unlink(resolve(cwd, noChangesState.planFile)).catch((err: unknown) => {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      });
+    }
     logger.summary(`Issue #${issueNum}: no changes made`);
     return { success: false };
   }
@@ -196,6 +203,14 @@ export async function fixIssue(
   process.off("SIGINT", cleanup);
   process.off("SIGTERM", cleanup);
   await removeLabel(issueNum, LABELS.inProgress, cwd);
+
+  // Delete plan file before clearing state
+  const finalState = await loadState(stateDir, repoContext.repoName, issueNum);
+  if (finalState?.planFile) {
+    await unlink(resolve(cwd, finalState.planFile)).catch((err: unknown) => {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    });
+  }
   await clearState(stateDir, repoContext.repoName, issueNum);
 
   logger.summary(`Issue #${issueNum}: PR created — ${prUrl}`);
