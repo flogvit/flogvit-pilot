@@ -53,7 +53,9 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
   for (const issue of autofixIssues) {
     if (inProgressNums.has(issue.number)) continue;
     const existingState = await loadState(stateDir, repoName, issue.number);
-    if (existingState) continue;
+    // Skip only if a fix (or other non-triage command) is already in progress.
+    // Triage leaves behind state with command:"triage" — that should not block dispatch.
+    if (existingState && existingState.command !== "triage") continue;
     const fixAttempts = 1;
     await saveState(stateDir, repoName, issue.number, {
       issueNumber: issue.number,
@@ -265,7 +267,9 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
       for (const issue of autofixIssues) {
         if (inProgressNums.has(issue.number)) continue;
         const existingState = await loadState(stateDir, repoName, issue.number);
-        if (existingState) continue;
+        // Skip only if a fix (or other non-triage command) is already in progress.
+        // Triage leaves behind state with command:"triage" — that should not block dispatch.
+        if (existingState && existingState.command !== "triage") continue;
         const jobName = `fix-${issue.number}`;
         if (activeJobs.has(jobName)) continue;
         await saveState(stateDir, repoName, issue.number, {
