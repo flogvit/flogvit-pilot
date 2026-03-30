@@ -135,9 +135,11 @@ export async function fixIssue(
 
   const parsed = parseToolOutput(result.output);
 
-  // Check if there are actual changes
+  // Check if there are actual changes — either uncommitted or already committed (agent committed manually)
   const diffResult = await $`git status --porcelain`.cwd(wtPath).text();
-  const hasChanges = diffResult.trim().length > 0;
+  const hasUncommitted = diffResult.trim().length > 0;
+  const commitsAhead = await $`git log ${repoContext.defaultBranch}..HEAD --oneline`.cwd(wtPath).nothrow().text();
+  const hasChanges = hasUncommitted || commitsAhead.trim().length > 0;
 
   if (parsed.status === "stuck" || (!hasChanges && parsed.status !== "done")) {
     // Agent is stuck or made no changes
@@ -181,10 +183,12 @@ export async function fixIssue(
     return { success: false };
   }
 
-  // Commit, push, create PR
-  await $`git add -A`.cwd(wtPath);
-  await $`git restore --staged .claude/worktrees`.cwd(wtPath).nothrow();
-  await $`git commit -m ${`fix: ${issue.title} (fixes #${issueNum})`}`.cwd(wtPath);
+  // Commit (if uncommitted changes remain) then push
+  if (hasUncommitted) {
+    await $`git add -A`.cwd(wtPath);
+    await $`git restore --staged .claude/worktrees`.cwd(wtPath).nothrow();
+    await $`git commit -m ${`fix: ${issue.title} (fixes #${issueNum})`}`.cwd(wtPath);
+  }
   await $`git push -u origin ${branch}`.cwd(wtPath);
 
   const prUrl = await createPullRequest(
