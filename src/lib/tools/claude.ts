@@ -60,7 +60,7 @@ export class ClaudeRunner implements ToolRunner {
     }
 
     if (opts.jobName) {
-      args.push("--remote-control", opts.jobName);
+      args.push("--name", opts.jobName);
     }
 
     return args;
