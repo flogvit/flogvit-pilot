@@ -263,6 +263,16 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         if (existingState) continue;
         const jobName = `fix-${issue.number}`;
         if (activeJobs.has(jobName)) continue;
+        await saveState(stateDir, repoName, issue.number, {
+          issueNumber: issue.number,
+          command: "fix-issue",
+          branch: null,
+          agentSummary: "",
+          question: null,
+          issueData: { title: issue.title, body: "" },
+          createdAt: new Date().toISOString(),
+          fixAttempts: 1,
+        });
         activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "fix" });
         log(jobName, `starting fix for issue #${issue.number}`);
         fixIssue(issue.number, config, cwd).then(() => {
