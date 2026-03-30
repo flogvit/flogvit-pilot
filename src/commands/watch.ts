@@ -9,6 +9,7 @@ import { reviewPR } from "./review-pr";
 import { auditPR } from "./audit-pr";
 import { run as mergeRun } from "./merge";
 import { PIPELINE_STAGES, STAGE_LABELS } from "../lib/pipeline";
+import { findAnsweredIssues } from "./watch-helpers";
 
 export { findAnsweredIssues } from "./watch-helpers";
 
@@ -32,16 +33,15 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
 
   // 2. Check for answered waiting issues
   const waitingIssues = await listIssuesWithLabel(LABELS.waiting, cwd);
-  for (const waitingIssue of waitingIssues) {
-    const fullIssue = await getIssue(waitingIssue.number, cwd);
-    const comments = fullIssue.comments;
-    if (comments.length === 0) continue;
-    const lastComment = comments[comments.length - 1];
-    if (!lastComment.body.includes("🤖 **flogvit-coder**")) {
-      console.log(`Issue #${waitingIssue.number} has been answered, resuming...`);
-      await removeLabel(waitingIssue.number, LABELS.waiting, cwd);
-      await fixIssue(waitingIssue.number, config, cwd);
-    }
+  const waitingWithComments = await Promise.all(
+    waitingIssues.map((i) => getIssue(i.number, cwd))
+  );
+  const answeredNums = findAnsweredIssues(waitingWithComments, "🤖 **flogvit-coder**");
+  for (const num of answeredNums) {
+    const issue = waitingIssues.find((i) => i.number === num)!;
+    console.log(`Issue #${num} has been answered, resuming...`);
+    await removeLabel(num, LABELS.waiting, cwd);
+    await fixIssue(num, config, cwd);
   }
 
   // 3. Dispatch pipeline stages
@@ -175,27 +175,26 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
 
       // Collect waiting issues with answers
       const waitingIssues = await listIssuesWithLabel(LABELS.waiting, cwd);
-      for (const waitingIssue of waitingIssues) {
-        const fullIssue = await getIssue(waitingIssue.number, cwd);
-        const comments = fullIssue.comments;
-        if (comments.length === 0) continue;
-        const lastComment = comments[comments.length - 1];
-        if (!lastComment.body.includes("🤖 **flogvit-coder**")) {
-          const jobName = `resume-${waitingIssue.number}`;
-          if (activeJobs.has(jobName)) continue;
-          activeJobs.set(jobName, { label: waitingIssue.title, startedAt: Date.now(), stage: "fix" });
-          log(jobName, `resuming issue #${waitingIssue.number}`);
-          (async () => {
-            await removeLabel(waitingIssue.number, LABELS.waiting, cwd);
-            await fixIssue(waitingIssue.number, config, cwd);
-          })().then(() => {
-            activeJobs.delete(jobName);
-            log(jobName, `done`);
-          }).catch((err) => {
-            activeJobs.delete(jobName);
-            log(jobName, `error: ${String(err).slice(0, 60)}`);
-          });
-        }
+      const waitingWithComments = await Promise.all(
+        waitingIssues.map((i) => getIssue(i.number, cwd))
+      );
+      const answeredNums = findAnsweredIssues(waitingWithComments, "🤖 **flogvit-coder**");
+      for (const num of answeredNums) {
+        const waitingIssue = waitingIssues.find((i) => i.number === num)!;
+        const jobName = `resume-${num}`;
+        if (activeJobs.has(jobName)) continue;
+        activeJobs.set(jobName, { label: waitingIssue.title, startedAt: Date.now(), stage: "fix" });
+        log(jobName, `resuming issue #${num}`);
+        (async () => {
+          await removeLabel(num, LABELS.waiting, cwd);
+          await fixIssue(num, config, cwd);
+        })().then(() => {
+          activeJobs.delete(jobName);
+          log(jobName, `done`);
+        }).catch((err) => {
+          activeJobs.delete(jobName);
+          log(jobName, `error: ${String(err).slice(0, 60)}`);
+        });
       }
 
       // Collect pipeline stage work
