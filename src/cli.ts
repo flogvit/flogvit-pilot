@@ -29,6 +29,7 @@ const COMMANDS: Record<string, () => Promise<CommandModule>> = {
   verify: () => import("./commands/verify"),
   triage: () => import("./commands/triage"),
   "review-pr": () => import("./commands/review-pr"),
+  "audit-pr": () => import("./commands/audit-pr"),
   "pr-review": () => import("./commands/pr-review"),
 };
 
@@ -94,6 +95,7 @@ Commands:
   verify              Run tests + lint + Playwright
   triage              Triage and label new issues
   review-pr <#>       AI code review of a PR → advance to needs-audit
+  audit-pr <#>        Security audit of a PR → advance to approved
   pr-review <#>       Review a pull request
 
 Options:
