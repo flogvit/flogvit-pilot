@@ -20,8 +20,6 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
   const repoName = basename(cwd);
   const homeDir = process.env.HOME ?? homedir();
   const stateDir = resolve(homeDir, ".flogvit-coder", "state");
-  const FLOGVIT_CODER_PREFIX = "flogvit-coder:";
-
   // 1. Detect unlabeled issues → set needs-triage (skip ignored issues)
   const allOpenIssues = await listOpenIssues(cwd);
   for (const issue of allOpenIssues) {
@@ -139,6 +137,8 @@ interface ActiveJob {
   stage: string;
 }
 
+const FLOGVIT_CODER_PREFIX = "flogvit-coder:";
+
 const activeJobs = new Map<string, ActiveJob>();
 const recentLogs: string[] = [];
 const MAX_LOGS = 8;
@@ -216,8 +216,9 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
       const allOpenIssues = await listOpenIssues(cwd);
       for (const issue of allOpenIssues) {
         if (issue.labels.includes(LABELS.ignore)) continue;
-        if (issue.labels.some((l) => l.startsWith("flogvit-coder:"))) continue;
+        if (issue.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX))) continue;
         await addLabel(issue.number, LABELS.needsTriage, cwd);
+        log(`issue-${issue.number}`, `unlabeled → needs-triage`);
       }
 
       // Dispatch triage for needs-triage issues
@@ -317,7 +318,10 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
           if (!issueNum) continue;
           const state = await loadState(stateDir, repoName, issueNum);
           const prFixAttempts = state?.prFixAttempts ?? 0;
-          if (prFixAttempts >= 3) continue;
+          if (prFixAttempts >= 3) {
+            log(`fix-pr-${pr.number}`, `prFixAttempts exhausted, skipping`);
+            continue;
+          }
           const jobName = `fix-pr-${pr.number}`;
           if (activeJobs.has(jobName)) continue;
           const model = prFixAttempts >= 1 ? "opus" : undefined;
