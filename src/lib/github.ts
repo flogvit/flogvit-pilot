@@ -100,6 +100,16 @@ export async function listOpenIssues(cwd: string): Promise<{ number: number; tit
   }));
 }
 
+export async function listOpenPRs(cwd: string): Promise<{ number: number; title: string; labels: string[] }[]> {
+  const result = await $`gh pr list --state open --limit 100 --json number,title,labels`.cwd(cwd).text();
+  const data = JSON.parse(result);
+  return data.map((pr: { number: number; title: string; labels: { name: string }[] }) => ({
+    number: pr.number,
+    title: pr.title,
+    labels: pr.labels.map((l) => l.name),
+  }));
+}
+
 export async function addLabel(
   issueNum: number,
   label: string,

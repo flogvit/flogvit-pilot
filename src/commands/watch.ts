@@ -1,7 +1,7 @@
 import { resolve, basename } from "path";
 import { homedir } from "os";
 import type { Config } from "../lib/config";
-import { listIssuesWithLabel, listPRsWithLabel, listOpenIssues, getIssue, removeLabel, addLabel, LABELS } from "../lib/github";
+import { listIssuesWithLabel, listPRsWithLabel, listOpenIssues, listOpenPRs, getIssue, removeLabel, addLabel, addPRLabel, LABELS } from "../lib/github";
 import { loadState, saveState } from "../lib/state";
 import { triageIssue } from "./triage";
 import { planIssue } from "./plan-issue";
@@ -27,6 +27,15 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
     if (issue.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX) || ALL_KNOWN_LABELS.has(l as never))) continue;
     console.log(`Found unlabeled issue #${issue.number}: ${issue.title} → needs-triage`);
     await addLabel(issue.number, LABELS.needsTriage, cwd);
+  }
+
+  // 1b. Detect unlabeled PRs → set needs-verify (skip ignored PRs)
+  const allOpenPRs = await listOpenPRs(cwd);
+  for (const pr of allOpenPRs) {
+    if (pr.labels.includes(LABELS.ignore)) continue;
+    if (pr.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX))) continue;
+    console.log(`Found unlabeled PR #${pr.number}: ${pr.title} → needs-verify`);
+    await addPRLabel(pr.number, LABELS.needsVerify, cwd);
   }
 
   // 2. Dispatch triage for needs-triage issues
@@ -225,6 +234,15 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         if (issue.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX) || ALL_KNOWN_LABELS.has(l as never))) continue;
         await addLabel(issue.number, LABELS.needsTriage, cwd);
         log(`issue-${issue.number}`, `unlabeled → needs-triage`);
+      }
+
+      // Detect unlabeled PRs → set needs-verify
+      const allOpenPRs = await listOpenPRs(cwd);
+      for (const pr of allOpenPRs) {
+        if (pr.labels.includes(LABELS.ignore)) continue;
+        if (pr.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX))) continue;
+        await addPRLabel(pr.number, LABELS.needsVerify, cwd);
+        log(`pr-${pr.number}`, `unlabeled PR → needs-verify`);
       }
 
       // Dispatch triage for needs-triage issues
