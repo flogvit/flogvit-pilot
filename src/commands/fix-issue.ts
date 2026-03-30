@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
+import { mkdir, appendFile } from "fs/promises";
 import type { Config } from "../lib/config";
 import { resolveToolForCommand } from "../lib/config";
 import { getTool } from "../lib/tool-runner";
@@ -104,12 +105,16 @@ export async function fixIssue(
 
   logger.detail(`Running ${toolName} for issue #${issueNum}`);
 
+  const agentLogFile = logger.getLogFile().replace(".log", "-agent.log");
+  await mkdir(resolve(agentLogFile, ".."), { recursive: true });
+
   const result = await tool.run({
     prompt,
     cwd,
     jobName: `fix-issue-${issueNum}`,
     fallbackApiKey: config.defaults.fallback_api_key,
     verbose,
+    onChunk: (chunk) => appendFile(agentLogFile, chunk).catch(() => {}),
     maxTurns: (toolConfig["max-turns"] as number) ?? undefined,
     allowedTools: (toolConfig["allowed-tools"] as string[]) ?? undefined,
   });

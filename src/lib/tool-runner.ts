@@ -4,6 +4,7 @@ export interface ToolRunnerOptions {
   jobName?: string;
   fallbackApiKey?: string;
   verbose?: boolean;
+  onChunk?: (chunk: string) => void;
   allowedTools?: string[];
   maxTurns?: number;
 }

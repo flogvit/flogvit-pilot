@@ -94,6 +94,7 @@ export class ClaudeRunner implements ToolRunner {
           if (done) break;
           chunks.push(Buffer.from(value));
           if (opts.verbose) process.stderr.write(value);
+          opts.onChunk?.(new TextDecoder().decode(value));
         }
         const output = Buffer.concat(chunks).toString("utf-8");
         const stderr = await new Response(proc.stderr).text();

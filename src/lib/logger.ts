@@ -45,6 +45,10 @@ export class Logger {
     return [...this.summaries];
   }
 
+  getLogFile(): string {
+    return this.logFile;
+  }
+
   async flush(): Promise<void> {
     if (this.buffer.length === 0) return;
 
