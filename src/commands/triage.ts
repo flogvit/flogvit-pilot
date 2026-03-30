@@ -17,6 +17,7 @@ import {
 import { gatherRepoContext } from "../lib/context";
 import { loadTemplate, renderTemplate } from "../lib/template";
 import { loadState, saveState } from "../lib/state";
+import { Logger } from "../lib/logger";
 import { buildIssueCommentsSection } from "./fix-issue";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -52,7 +53,9 @@ export async function triageIssue(
 ): Promise<{ verdict: "autofix" | "needs-plan" | "waiting" | "close" }> {
   const homeDir = process.env.HOME ?? homedir();
   const stateDir = resolve(homeDir, ".flogvit-coder", "state");
+  const logDir = resolve(homeDir, ".flogvit-coder", "logs");
   const repoContext = await gatherRepoContext(cwd);
+  const logger = new Logger({ logDir, repoName: basename(cwd), command: "triage", verbose: false });
   const repoName = basename(cwd);
 
   const existingState = await loadState(stateDir, repoName, issueNum);
@@ -113,6 +116,9 @@ export async function triageIssue(
     maxTurns: 1,
     allowedTools: [],
   });
+
+  logger.detail(`Triage output for #${issueNum}:\n${result.output}`);
+  await logger.flush();
 
   const parsed = parseTriageOutput(result.output);
 
