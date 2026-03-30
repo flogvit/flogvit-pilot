@@ -11,6 +11,7 @@ import {
   removeLabel,
   commentOnIssue,
   createPullRequest,
+  mergePullRequest,
   formatIssueComment,
   parseBranchName,
   LABELS,
@@ -184,9 +185,11 @@ export async function fixIssue(
     cwd
   );
 
+  await mergePullRequest(prUrl, cwd);
+
   await commentOnIssue(
     issueNum,
-    formatIssueComment("done", `Created PR: ${prUrl}`),
+    formatIssueComment("done", `Merged PR: ${prUrl}`),
     cwd
   );
   process.off("SIGINT", cleanup);
@@ -194,10 +197,11 @@ export async function fixIssue(
   await removeLabel(issueNum, LABELS.inProgress, cwd);
   await clearState(stateDir, repoContext.repoName, issueNum);
 
-  // Go back to default branch
+  // Go back to default branch and pull merged changes
   await $`git checkout ${repoContext.defaultBranch}`.cwd(cwd);
+  await $`git pull`.cwd(cwd);
 
-  logger.summary(`Issue #${issueNum}: fixed — ${prUrl}`);
+  logger.summary(`Issue #${issueNum}: fixed and merged — ${prUrl}`);
   return { success: true, prUrl };
 }
 

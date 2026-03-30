@@ -105,6 +105,10 @@ export async function createPullRequest(
   return result.trim();
 }
 
+export async function mergePullRequest(prUrl: string, cwd: string): Promise<void> {
+  await $`gh pr merge ${prUrl} --squash --delete-branch`.cwd(cwd);
+}
+
 export async function ensureLabels(cwd: string): Promise<void> {
   for (const label of LABEL_DEFINITIONS) {
     await $`gh label create ${label.name} --description ${label.description} --color ${label.color}`.cwd(cwd).nothrow();
