@@ -28,6 +28,7 @@ Merge → delete plan file + state
 |-------|-------|---------|
 | `needsTriage` | `flogvit-coder:needs-triage` | Needs triage evaluation |
 | `needsPlan` | `flogvit-coder:needs-plan` | Triage says vague, plan-issue will run |
+| `ignore` | `flogvit-coder:ignore` | flogvit-coder leaves this issue/PR completely alone |
 
 ### Existing labels (unchanged)
 `autofix`, `flogvit-coder:waiting`, `flogvit-coder:in-progress`, `flogvit-coder:failed`, `flogvit-coder:changes-requested`, `flogvit-coder:security-issue`, all pipeline labels.
@@ -182,6 +183,7 @@ security-issue: always → waiting immediately (no auto-retry)
 | `planGenerated = true` and `needs-plan` triggered again | Set `waiting` directly |
 | `security-issue` label | Set `waiting`, never auto-retry |
 | `waiting` → only cleared by human reply | Watch checks last comment is not from bot |
+| `flogvit-coder:ignore` present | Skip entirely — no triage, no dispatch, no state |
 
 ---
 
@@ -190,6 +192,7 @@ security-issue: always → waiting immediately (no auto-retry)
 ### New polling sections (in order):
 
 1. **Unlabeled issues** — find open issues with no `flogvit-coder:*` labels → set `needs-triage`
+   - Skip issues with `flogvit-coder:ignore`
 2. **needs-triage** — dispatch `triage` (skip if `in-progress`)
 3. **needs-plan** — dispatch `plan-issue` (skip if `in-progress`)
 4. **waiting + human reply** — set `needs-triage` (existing logic, redirected from `fix-issue` to `triage`)
