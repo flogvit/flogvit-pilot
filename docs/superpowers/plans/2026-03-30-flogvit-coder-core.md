@@ -290,6 +290,7 @@ export interface CommandConfig {
 export interface Config {
   defaults: {
     tool: string;
+    fallback_api_key?: string;  // Used when Max subscription hits rate limits
   };
   tools: Record<string, ToolConfig>;
   commands: Record<string, CommandConfig>;
@@ -1000,6 +1001,8 @@ Create `src/lib/tool-runner.ts`:
 export interface ToolRunnerOptions {
   prompt: string;
   cwd: string;
+  jobName?: string;          // Used as --remote-control session name (e.g. "fix-issue-42")
+  fallbackApiKey?: string;   // API key to use if Max subscription is rate-limited
   allowedTools?: string[];
   maxTurns?: number;
 }
@@ -1038,12 +1041,63 @@ export function getAvailableTools(): string[] {
 
 - [ ] **Step 4: Implement Claude runner**
 
+**Auth note:** flogvit-coder agents always use Max subscription — `ANTHROPIC_API_KEY` is stripped
+from the spawned process env even if set in the parent terminal. The user's own manual `claude-api`
+sessions (and any subagents they spawn) handle API key billing independently.
+
 Create `src/lib/tools/claude.ts`:
 
 ```typescript
 import { $ } from "bun";
 import type { ToolRunner, ToolRunnerOptions, ToolResult } from "../tool-runner";
 import { registerTool } from "../tool-runner";
+
+const RATE_LIMIT_PATTERNS = [
+  /rate.?limit/i,
+  /too many requests/i,
+  /usage.?limit/i,
+  /quota.?exceeded/i,
+];
+
+const RATE_LIMIT_RETRY_DELAYS_MS = [5 * 60_000, 10 * 60_000, 20 * 60_000]; // 5m, 10m, 20m
+
+function isRateLimited(text: string): boolean {
+  return RATE_LIMIT_PATTERNS.some((p) => p.test(text));
+}
+
+/**
+ * Try to extract the suggested wait time from a rate limit message.
+ * Claude CLI may output e.g. "try again in 47 minutes" or "resets at 14:32".
+ * Returns milliseconds to wait, or null if no time found.
+ *
+ * NOTE: The exact format of Claude CLI rate limit messages is not documented.
+ * This function should be updated once the actual output is observed in the wild.
+ */
+function parseRateLimitDelay(text: string): number | null {
+  // "try again in X seconds"
+  const seconds = text.match(/try again in (\d+)\s*second/i);
+  if (seconds) return parseInt(seconds[1]) * 1000;
+
+  // "try again in X minutes"
+  const minutes = text.match(/try again in (\d+)\s*minute/i);
+  if (minutes) return parseInt(minutes[1]) * 60_000;
+
+  // "try again in X hours"
+  const hours = text.match(/try again in (\d+)\s*hour/i);
+  if (hours) return parseInt(hours[1]) * 3_600_000;
+
+  // "resets at HH:MM" — compute diff from now
+  const resetsAt = text.match(/resets? at (\d{1,2}):(\d{2})/i);
+  if (resetsAt) {
+    const now = new Date();
+    const target = new Date();
+    target.setHours(parseInt(resetsAt[1]), parseInt(resetsAt[2]), 0, 0);
+    if (target <= now) target.setDate(target.getDate() + 1); // next day
+    return target.getTime() - now.getTime();
+  }
+
+  return null;
+}
 
 export class ClaudeRunner implements ToolRunner {
   name = "claude";
@@ -1059,47 +1113,94 @@ export class ClaudeRunner implements ToolRunner {
       args.push("--allowedTools", opts.allowedTools.join(","));
     }
 
+    // Each agent session is visible remotely via claude.ai/code and the Claude mobile app.
+    // Session name defaults to the job label (e.g. "fix-issue-42") if provided.
+    if (opts.jobName) {
+      args.push("--remote-control", opts.jobName);
+    }
+
     return args;
   }
 
   async run(opts: ToolRunnerOptions): Promise<ToolResult> {
     const args = this.buildArgs(opts);
 
-    try {
+    for (let attempt = 0; attempt <= RATE_LIMIT_RETRY_DELAYS_MS.length; attempt++) {
+      try {
+        // Always strip ANTHROPIC_API_KEY so flogvit-coder agents use Max subscription.
+      // The user's own manual claude-api sessions handle API key billing separately.
+      const env = { ...process.env };
+      delete env.ANTHROPIC_API_KEY;
+
       const proc = Bun.spawn(["claude", ...args.map(String)], {
-        cwd: opts.cwd,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+          cwd: opts.cwd,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
 
-      const output = await new Response(proc.stdout).text();
-      const stderr = await new Response(proc.stderr).text();
-      const exitCode = await proc.exited;
+        const output = await new Response(proc.stdout).text();
+        const stderr = await new Response(proc.stderr).text();
+        const exitCode = await proc.exited;
+        const combined = `${output}\n${stderr}`;
 
-      if (exitCode !== 0) {
+        if (exitCode !== 0 && isRateLimited(combined)) {
+          // Log the full raw output so we can inspect the exact format later
+          // and improve parseRateLimitDelay() if needed.
+          logger.debug("[claude] Rate limit raw output", { exitCode, stdout: output, stderr });
+
+          if (opts.fallbackApiKey && attempt === 0) {
+            logger.info("[claude] Max rate limited. Retrying with fallback API key...");
+            env.ANTHROPIC_API_KEY = opts.fallbackApiKey;
+            continue;
+          }
+          const parsed = parseRateLimitDelay(combined);
+          const delayMs = parsed ?? RATE_LIMIT_RETRY_DELAYS_MS[attempt];
+          if (delayMs === undefined) {
+            return {
+              success: false,
+              output: combined,
+              summary: "Rate limit hit — all retries exhausted",
+            };
+          }
+          const delayMin = Math.ceil(delayMs / 60_000);
+          if (parsed) {
+            logger.info(`[claude] Rate limited. Sleeping ${delayMin}m (wait time parsed from Claude output).`);
+          } else {
+            logger.warn(`[claude] Rate limited. Could not parse wait time from output — using fallback delay of ${delayMin}m (attempt ${attempt + 1}/${RATE_LIMIT_RETRY_DELAYS_MS.length}). Check debug log to improve parser.`);
+          }
+          await Bun.sleep(delayMs);
+          continue;
+        }
+
+        if (exitCode !== 0) {
+          return {
+            success: false,
+            output: combined,
+            summary: `Claude exited with code ${exitCode}`,
+          };
+        }
+
+        // Extract last line as summary (Claude typically ends with a summary)
+        const lines = output.trim().split("\n");
+        const summary = lines[lines.length - 1] ?? "";
+
+        return {
+          success: true,
+          output,
+          summary,
+        };
+      } catch (error) {
         return {
           success: false,
-          output: `${output}\n${stderr}`,
-          summary: `Claude exited with code ${exitCode}`,
+          output: String(error),
+          summary: `Failed to run claude: ${error}`,
         };
       }
-
-      // Extract last line as summary (Claude typically ends with a summary)
-      const lines = output.trim().split("\n");
-      const summary = lines[lines.length - 1] ?? "";
-
-      return {
-        success: true,
-        output,
-        summary,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        output: String(error),
-        summary: `Failed to run claude: ${error}`,
-      };
     }
+
+    // Unreachable, but TypeScript needs it
+    return { success: false, output: "", summary: "Unexpected exit from retry loop" };
   }
 }
 
