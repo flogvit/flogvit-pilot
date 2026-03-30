@@ -185,11 +185,36 @@ export async function fixIssue(
     cwd
   );
 
+  // Run tests before merging
+  if (repoContext.testCommand) {
+    logger.detail(`Running tests: ${repoContext.testCommand}`);
+    const [cmd, ...cmdArgs] = repoContext.testCommand.split(" ");
+    const testProc = Bun.spawn([cmd, ...cmdArgs], { cwd, stdout: "pipe", stderr: "pipe" });
+    const testOut = await new Response(testProc.stdout).text();
+    const testErr = await new Response(testProc.stderr).text();
+    const testExit = await testProc.exited;
+
+    if (testExit !== 0) {
+      await commentOnIssue(
+        issueNum,
+        formatIssueComment("waiting", `Tests failed — not merging.\n\n\`\`\`\n${(testOut + testErr).slice(0, 3000)}\n\`\`\``),
+        cwd
+      );
+      process.off("SIGINT", cleanup);
+      process.off("SIGTERM", cleanup);
+      await removeLabel(issueNum, LABELS.inProgress, cwd);
+      await addLabel(issueNum, LABELS.failed, cwd);
+      logger.summary(`Issue #${issueNum}: tests failed — PR created but not merged: ${prUrl}`);
+      return { success: false, prUrl };
+    }
+    logger.detail("Tests passed.");
+  }
+
   await mergePullRequest(prUrl, cwd);
 
   await commentOnIssue(
     issueNum,
-    formatIssueComment("done", `Merged PR: ${prUrl}`),
+    formatIssueComment("done", `Tests passed. Merged PR: ${prUrl}`),
     cwd
   );
   process.off("SIGINT", cleanup);

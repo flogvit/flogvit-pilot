@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { readFile, stat } from "fs/promises";
 import { join, basename } from "path";
+import { parse as parseToml } from "@iarna/toml";
 
 export interface RepoContext {
   repoName: string;
@@ -8,6 +9,33 @@ export interface RepoContext {
   fileStructure: string;
   claudeMd: string | null;
   defaultBranch: string;
+  testCommand: string | null;
+}
+
+async function detectTestCommand(cwd: string, language: string): Promise<string | null> {
+  // Check .flogvit-coder/config.toml for explicit test_command override
+  try {
+    const raw = await readFile(join(cwd, ".flogvit-coder", "config.toml"), "utf-8");
+    const config = parseToml(raw) as { defaults?: { test_command?: string } };
+    if (config.defaults?.test_command) return config.defaults.test_command;
+  } catch { /* no config */ }
+
+  // Check package.json for a test script
+  if (language === "TypeScript/JavaScript") {
+    try {
+      const pkg = JSON.parse(await readFile(join(cwd, "package.json"), "utf-8"));
+      if (pkg.scripts?.test) return "npm test";
+    } catch { /* no package.json */ }
+  }
+
+  const defaults: Record<string, string> = {
+    "Rust": "cargo test",
+    "Go": "go test ./...",
+    "Python": "pytest",
+    "Ruby": "bundle exec rspec",
+    "Java": "mvn test",
+  };
+  return defaults[language] ?? null;
 }
 
 async function detectLanguage(cwd: string): Promise<string> {
@@ -58,12 +86,10 @@ export async function gatherRepoContext(cwd: string): Promise<RepoContext> {
     getDefaultBranch(cwd),
   ]);
 
-  let claudeMd: string | null = null;
-  try {
-    claudeMd = await readFile(join(cwd, "CLAUDE.md"), "utf-8");
-  } catch {
-    // No CLAUDE.md
-  }
+  const [claudeMd, testCommand] = await Promise.all([
+    readFile(join(cwd, "CLAUDE.md"), "utf-8").catch(() => null),
+    detectTestCommand(cwd, language),
+  ]);
 
-  return { repoName, language, fileStructure, claudeMd, defaultBranch };
+  return { repoName, language, fileStructure, claudeMd, defaultBranch, testCommand };
 }
