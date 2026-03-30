@@ -137,6 +137,10 @@ export async function commentOnIssue(
   await $`gh issue comment ${issueNum} --body ${body}`.cwd(cwd);
 }
 
+export async function closeIssue(issueNum: number, comment: string, cwd: string): Promise<void> {
+  await $`gh issue close ${issueNum} --comment ${comment}`.cwd(cwd);
+}
+
 export interface PR {
   number: number;
   title: string;

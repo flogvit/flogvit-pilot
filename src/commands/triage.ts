@@ -10,6 +10,7 @@ import {
   addLabel,
   removeLabel,
   commentOnIssue,
+  closeIssue,
   formatIssueComment,
   LABELS,
 } from "../lib/github";
@@ -24,6 +25,7 @@ export type TriageVerdict =
   | { verdict: "autofix" }
   | { verdict: "needs-plan" }
   | { verdict: "waiting"; reason: string }
+  | { verdict: "close"; reason: string }
   | { verdict: "unknown" };
 
 export function parseTriageOutput(output: string): TriageVerdict {
@@ -33,10 +35,10 @@ export function parseTriageOutput(output: string): TriageVerdict {
     if (line === "FLOGVIT-CODER:TRIAGE:AUTOFIX") return { verdict: "autofix" };
     if (line === "FLOGVIT-CODER:TRIAGE:NEEDS-PLAN") return { verdict: "needs-plan" };
     if (line.startsWith("FLOGVIT-CODER:TRIAGE:WAITING:")) {
-      return {
-        verdict: "waiting",
-        reason: line.replace("FLOGVIT-CODER:TRIAGE:WAITING:", "").trim(),
-      };
+      return { verdict: "waiting", reason: line.replace("FLOGVIT-CODER:TRIAGE:WAITING:", "").trim() };
+    }
+    if (line.startsWith("FLOGVIT-CODER:TRIAGE:CLOSE:")) {
+      return { verdict: "close", reason: line.replace("FLOGVIT-CODER:TRIAGE:CLOSE:", "").trim() };
     }
   }
   return { verdict: "unknown" };
@@ -47,7 +49,7 @@ export async function triageIssue(
   config: Config,
   cwd: string,
   failureContext?: string
-): Promise<{ verdict: "autofix" | "needs-plan" | "waiting" }> {
+): Promise<{ verdict: "autofix" | "needs-plan" | "waiting" | "close" }> {
   const homeDir = process.env.HOME ?? homedir();
   const stateDir = resolve(homeDir, ".flogvit-coder", "state");
   const repoContext = await gatherRepoContext(cwd);
@@ -139,6 +141,11 @@ export async function triageIssue(
   if (parsed.verdict === "needs-plan") {
     await addLabel(issueNum, LABELS.needsPlan, cwd);
     return { verdict: "needs-plan" };
+  }
+
+  if (parsed.verdict === "close") {
+    await closeIssue(issueNum, parsed.reason, cwd);
+    return { verdict: "close" };
   }
 
   // waiting or unknown → set waiting
