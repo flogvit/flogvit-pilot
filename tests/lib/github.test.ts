@@ -3,6 +3,7 @@ import {
   formatIssueComment,
   parseBranchName,
   LABELS,
+  extractPRNumber,
 } from "../../src/lib/github";
 
 describe("formatIssueComment", () => {
@@ -53,5 +54,41 @@ describe("LABELS", () => {
     expect(LABELS.waiting).toBe("flogvit-coder:waiting");
     expect(LABELS.inProgress).toBe("flogvit-coder:in-progress");
     expect(LABELS.failed).toBe("flogvit-coder:failed");
+  });
+});
+
+describe("LABELS pipeline additions", () => {
+  test("has needsVerify label", () => {
+    expect(LABELS.needsVerify).toBe("flogvit-coder:needs-verify");
+  });
+  test("has needsReview label", () => {
+    expect(LABELS.needsReview).toBe("flogvit-coder:needs-review");
+  });
+  test("has needsAudit label", () => {
+    expect(LABELS.needsAudit).toBe("flogvit-coder:needs-audit");
+  });
+  test("has approved label", () => {
+    expect(LABELS.approved).toBe("flogvit-coder:approved");
+  });
+  test("has securityIssue label", () => {
+    expect(LABELS.securityIssue).toBe("flogvit-coder:security-issue");
+  });
+  test("has changesRequested label", () => {
+    expect(LABELS.changesRequested).toBe("flogvit-coder:changes-requested");
+  });
+});
+
+describe("extractPRNumber", () => {
+  test("extracts PR number from full GitHub URL", () => {
+    expect(extractPRNumber("https://github.com/org/repo/pull/26")).toBe(26);
+  });
+  test("extracts PR number from URL with trailing slash", () => {
+    expect(extractPRNumber("https://github.com/org/repo/pull/100/")).toBe(100);
+  });
+  test("returns NaN for invalid URL", () => {
+    expect(extractPRNumber("not-a-url")).toBeNaN();
+  });
+  test("works with single-digit PR numbers", () => {
+    expect(extractPRNumber("https://github.com/my-org/my-repo/pull/1")).toBe(1);
   });
 });

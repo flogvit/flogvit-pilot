@@ -7,6 +7,12 @@ export const LABELS = {
   waiting: "flogvit-coder:waiting",
   inProgress: "flogvit-coder:in-progress",
   failed: "flogvit-coder:failed",
+  needsVerify: "flogvit-coder:needs-verify",
+  needsReview: "flogvit-coder:needs-review",
+  needsAudit: "flogvit-coder:needs-audit",
+  approved: "flogvit-coder:approved",
+  securityIssue: "flogvit-coder:security-issue",
+  changesRequested: "flogvit-coder:changes-requested",
 } as const;
 
 const LABEL_DEFINITIONS = [
@@ -16,6 +22,12 @@ const LABEL_DEFINITIONS = [
   { name: LABELS.waiting, description: "flogvit-coder: waiting for human input", color: "fbca04" },
   { name: LABELS.inProgress, description: "flogvit-coder: currently working", color: "0075ca" },
   { name: LABELS.failed, description: "flogvit-coder: failed, needs manual help", color: "d73a4a" },
+  { name: LABELS.needsVerify, description: "flogvit-coder: run verification (tests)", color: "e4e669" },
+  { name: LABELS.needsReview, description: "flogvit-coder: run AI code review", color: "0075ca" },
+  { name: LABELS.needsAudit, description: "flogvit-coder: run security audit", color: "5319e7" },
+  { name: LABELS.approved, description: "flogvit-coder: approved for merge", color: "0e8a16" },
+  { name: LABELS.securityIssue, description: "flogvit-coder: security issue found", color: "d73a4a" },
+  { name: LABELS.changesRequested, description: "flogvit-coder: review requested changes", color: "fbca04" },
 ];
 
 export function formatIssueComment(
@@ -94,6 +106,60 @@ export async function commentOnIssue(
   cwd: string
 ): Promise<void> {
   await $`gh issue comment ${issueNum} --body ${body}`.cwd(cwd);
+}
+
+export interface PR {
+  number: number;
+  title: string;
+  headBranch: string;
+  labels: string[];
+  body: string;
+}
+
+export async function listPRsWithLabel(label: string, cwd: string): Promise<PR[]> {
+  const result = await $`gh pr list --label ${label} --state open --limit 50 --json number,title,headRefName,labels`.cwd(cwd).text();
+  const data = JSON.parse(result);
+  return data.map((pr: { number: number; title: string; headRefName: string; labels: { name: string }[] }) => ({
+    number: pr.number,
+    title: pr.title,
+    headBranch: pr.headRefName,
+    labels: pr.labels.map((l) => l.name),
+    body: "",
+  }));
+}
+
+export async function getPR(prNumber: number, cwd: string): Promise<PR> {
+  const result = await $`gh pr view ${prNumber} --json number,title,headRefName,labels,body`.cwd(cwd).text();
+  const data = JSON.parse(result);
+  return {
+    number: data.number,
+    title: data.title,
+    headBranch: data.headRefName,
+    labels: data.labels?.map((l: { name: string }) => l.name) ?? [],
+    body: data.body ?? "",
+  };
+}
+
+export async function addPRLabel(prNumber: number, label: string, cwd: string): Promise<void> {
+  await $`gh pr edit ${prNumber} --add-label ${label}`.cwd(cwd);
+}
+
+export async function removePRLabel(prNumber: number, label: string, cwd: string): Promise<void> {
+  await $`gh pr edit ${prNumber} --remove-label ${label}`.cwd(cwd).nothrow();
+}
+
+export async function commentOnPR(prNumber: number, body: string, cwd: string): Promise<void> {
+  await $`gh pr comment ${prNumber} --body ${body}`.cwd(cwd);
+}
+
+export async function getPRDiff(prNumber: number, cwd: string): Promise<string> {
+  return await $`gh pr diff ${prNumber}`.cwd(cwd).text();
+}
+
+export function extractPRNumber(prUrl: string): number {
+  const match = prUrl.match(/\/pull\/(\d+)\/?$/);
+  if (!match) return NaN;
+  return parseInt(match[1], 10);
 }
 
 export async function createPullRequest(
