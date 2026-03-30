@@ -1,7 +1,6 @@
 import { resolve, dirname, basename } from "path";
 import { fileURLToPath } from "url";
 import { homedir } from "os";
-import { readFile } from "fs/promises";
 import type { Config } from "../lib/config";
 import { resolveToolForCommand } from "../lib/config";
 import { getTool } from "../lib/tool-runner";
@@ -41,13 +40,15 @@ export function parsePlanOutput(output: string): PlanVerdict {
 }
 
 export function slugify(title: string): string {
-  return title
+  const slug = title
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, " ")
     .trim()
     .replace(/[\s-]+/g, "-")
     .slice(0, 50)
-    .replace(/-+$/, "");
+    .replace(/-+$/, "")
+    .replace(/^-+/, "");
+  return slug || "untitled";
 }
 
 export async function planIssue(
@@ -79,15 +80,9 @@ export async function planIssue(
 
   const issue = await getIssue(issueNum, cwd);
 
-  // Read existing plan if re-planning after feedback
-  let existingPlan = "";
-  if (existingState?.planFile) {
-    try {
-      existingPlan = await readFile(resolve(cwd, existingState.planFile), "utf-8");
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-    }
-  }
+  // Build plan file path from issue title slug
+  const slug = slugify(issue.title);
+  const planFile = `docs/superpowers/plans/issue-${issueNum}-${slug}.md`;
 
   const template = await loadTemplate("plan-issue", {
     builtinDir: __dirname,
@@ -98,11 +93,11 @@ export async function planIssue(
     issue_title: issue.title,
     issue_body: issue.body,
     issue_comments: buildIssueCommentsSection(issue.comments),
-    existing_plan: existingPlan ? `## Existing Plan (update this)\n\n${existingPlan}` : "",
     repo_name: repoContext.repoName,
     language: repoContext.language,
     file_structure: repoContext.fileStructure,
     claude_md: repoContext.claudeMd ? `## Project Instructions\n\n${repoContext.claudeMd}` : "",
+    plan_file: planFile,
   });
 
   const toolName = resolveToolForCommand(config, "plan-issue");
@@ -119,10 +114,6 @@ export async function planIssue(
   });
 
   const parsed = parsePlanOutput(result.output);
-
-  // Build plan file path from issue title slug
-  const slug = slugify(issue.title);
-  const planFile = `docs/superpowers/plans/issue-${issueNum}-${slug}.md`;
 
   // Update state
   await saveState(stateDir, repoName, issueNum, {

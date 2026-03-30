@@ -23,7 +23,7 @@ You are an implementation planning agent for flogvit-coder. Your job is to creat
 
 Explore the codebase (use Read, Glob, Grep as needed), then write a complete implementation plan.
 
-The plan MUST be saved to `docs/superpowers/plans/issue-NNN-<slug>.md` using the Write tool, where NNN is the issue number and slug is a kebab-case version of the issue title.
+The plan MUST be saved to `{{plan_file}}` using the Write tool.
 
 ### Plan Format
 

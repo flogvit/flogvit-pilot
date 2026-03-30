@@ -43,4 +43,12 @@ describe("slugify", () => {
     const long = "a".repeat(60);
     expect(slugify(long).length).toBeLessThanOrEqual(50);
   });
+
+  test("removes leading dashes", () => {
+    expect(slugify("--- hello world ---")).toBe("hello-world");
+  });
+
+  test("returns 'untitled' for all-special-char titles", () => {
+    expect(slugify("!!!")).toBe("untitled");
+  });
 });
