@@ -66,15 +66,7 @@ export async function triageIssue(
       cwd
     );
     await saveState(stateDir, repoName, issueNum, {
-      ...(existingState ?? {
-        issueNumber: issueNum,
-        command: "triage",
-        branch: null,
-        agentSummary: "",
-        question: null,
-        issueData: existingState!.issueData,
-        createdAt: new Date().toISOString(),
-      }),
+      ...existingState!,
       triageCount,
     });
     return { verdict: "waiting" };

@@ -35,6 +35,7 @@ describe("findAnsweredIssues", () => {
 describe("unlabeled issue detection", () => {
   test("identifies issues with no flogvit-coder labels", () => {
     const FLOGVIT_CODER_PREFIX = "flogvit-coder:";
+    const ALL_KNOWN_LABELS = new Set(["autofix", "auto-implement", "auto-review", "flogvit-coder:waiting", "flogvit-coder:in-progress", "flogvit-coder:failed", "flogvit-coder:needs-verify", "flogvit-coder:needs-review", "flogvit-coder:needs-audit", "flogvit-coder:approved", "flogvit-coder:security-issue", "flogvit-coder:changes-requested", "flogvit-coder:needs-triage", "flogvit-coder:needs-plan", "flogvit-coder:ignore"]);
     const issues = [
       { number: 1, labels: [] },
       { number: 2, labels: ["bug"] },
@@ -45,11 +46,11 @@ describe("unlabeled issue detection", () => {
 
     const unlabeled = issues.filter(
       (i) =>
-        !i.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX)) &&
-        !i.labels.includes("flogvit-coder:ignore")
+        !i.labels.includes("flogvit-coder:ignore") &&
+        !i.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX) || ALL_KNOWN_LABELS.has(l))
     );
 
-    expect(unlabeled.map((i) => i.number)).toEqual([1, 2, 5]);
+    expect(unlabeled.map((i) => i.number)).toEqual([1, 2]);
   });
 
   test("excludes issues with flogvit-coder:ignore label", () => {

@@ -133,14 +133,14 @@ export interface PR {
 }
 
 export async function listPRsWithLabel(label: string, cwd: string): Promise<PR[]> {
-  const result = await $`gh pr list --label ${label} --state open --limit 50 --json number,title,headRefName,labels`.cwd(cwd).text();
+  const result = await $`gh pr list --label ${label} --state open --limit 50 --json number,title,headRefName,labels,body`.cwd(cwd).text();
   const data = JSON.parse(result);
-  return data.map((pr: { number: number; title: string; headRefName: string; labels: { name: string }[] }) => ({
+  return data.map((pr: { number: number; title: string; headRefName: string; labels: { name: string }[]; body: string }) => ({
     number: pr.number,
     title: pr.title,
     headBranch: pr.headRefName,
     labels: pr.labels.map((l) => l.name),
-    body: "",
+    body: pr.body ?? "",
   }));
 }
 

@@ -137,6 +137,8 @@ export async function fixPR(
     });
 
     await removePRLabel(prNumber, LABELS.inProgress, cwd);
+    process.off("SIGINT", cleanup);
+    process.off("SIGTERM", cleanup);
     logger.summary(`PR #${prNumber}: fix-pr stuck (attempt ${prFixAttempts})`);
     return { success: false };
   }
@@ -144,6 +146,8 @@ export async function fixPR(
   if (!hasChanges) {
     await removeWorktree(wtPath, cwd);
     await removePRLabel(prNumber, LABELS.inProgress, cwd);
+    process.off("SIGINT", cleanup);
+    process.off("SIGTERM", cleanup);
     logger.summary(`PR #${prNumber}: no changes made`);
     return { success: false };
   }

@@ -24,7 +24,7 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
   const allOpenIssues = await listOpenIssues(cwd);
   for (const issue of allOpenIssues) {
     if (issue.labels.includes(LABELS.ignore)) continue;
-    if (issue.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX))) continue;
+    if (issue.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX) || ALL_KNOWN_LABELS.has(l as never))) continue;
     console.log(`Found unlabeled issue #${issue.number}: ${issue.title} → needs-triage`);
     await addLabel(issue.number, LABELS.needsTriage, cwd);
   }
@@ -138,6 +138,7 @@ interface ActiveJob {
 }
 
 const FLOGVIT_CODER_PREFIX = "flogvit-coder:";
+const ALL_KNOWN_LABELS = new Set(Object.values(LABELS));
 
 const activeJobs = new Map<string, ActiveJob>();
 const recentLogs: string[] = [];
@@ -216,7 +217,7 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
       const allOpenIssues = await listOpenIssues(cwd);
       for (const issue of allOpenIssues) {
         if (issue.labels.includes(LABELS.ignore)) continue;
-        if (issue.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX))) continue;
+        if (issue.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX) || ALL_KNOWN_LABELS.has(l as never))) continue;
         await addLabel(issue.number, LABELS.needsTriage, cwd);
         log(`issue-${issue.number}`, `unlabeled → needs-triage`);
       }

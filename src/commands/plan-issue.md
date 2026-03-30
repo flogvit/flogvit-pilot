@@ -6,8 +6,6 @@ You are an implementation planning agent for flogvit-coder. Your job is to creat
 
 {{issue_comments}}
 
-{{existing_plan}}
-
 ## Repository Context
 
 - **Language:** {{language}}
