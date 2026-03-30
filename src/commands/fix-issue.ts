@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { resolve, dirname } from "path";
+import { resolve, dirname, basename } from "path";
 import { fileURLToPath } from "url";
 import { mkdir, appendFile } from "fs/promises";
 import type { Config } from "../lib/config";
@@ -11,12 +11,14 @@ import {
   removeLabel,
   commentOnIssue,
   createPullRequest,
-  mergePullRequest,
+  addPRLabel,
+  extractPRNumber,
   formatIssueComment,
   parseBranchName,
   LABELS,
   type Issue,
 } from "../lib/github";
+import { createWorktree, removeWorktree, worktreePath } from "../lib/worktree";
 import { gatherRepoContext } from "../lib/context";
 import { loadTemplate, renderTemplate } from "../lib/template";
 import { saveState, clearState } from "../lib/state";
@@ -58,7 +60,8 @@ export async function fixIssue(
   issueNum: number,
   config: Config,
   cwd: string,
-  verbose: boolean = false
+  verbose: boolean = false,
+  retryModel?: string
 ): Promise<{ success: boolean; prUrl?: string }> {
   const homeDir = process.env.HOME ?? "~";
   const logDir = resolve(homeDir, ".flogvit-coder", "logs");
@@ -70,9 +73,14 @@ export async function fixIssue(
   const issue = await getIssue(issueNum, cwd);
   await addLabel(issueNum, LABELS.inProgress, cwd);
 
-  // Clean up label if process is interrupted
+  const repoName = basename(cwd);
+  const branch = parseBranchName("fix", issueNum);
+  const wtPath = worktreePath(homeDir, repoName, `fix-${issueNum}`);
+
+  // Clean up label and worktree if process is interrupted
   const cleanup = async () => {
     await removeLabel(issueNum, LABELS.inProgress, cwd).catch(() => {});
+    await removeWorktree(wtPath, cwd).catch(() => {});
     process.exit(1);
   };
   process.once("SIGINT", cleanup);
@@ -95,14 +103,14 @@ export async function fixIssue(
     file_structure: repoContext.fileStructure,
   });
 
-  // Create branch
-  const branch = parseBranchName("fix", issueNum);
-  await $`git checkout -b ${branch}`.cwd(cwd);
+  // Create worktree on a new branch
+  await createWorktree(wtPath, branch, cwd);
 
   // Run AI tool
   const toolName = resolveToolForCommand(config, "fix-issue");
   const tool = getTool(toolName);
   const toolConfig = config.tools[toolName] ?? {};
+  const model = retryModel ?? (toolConfig.model as string | undefined);
 
   logger.detail(`Running ${toolName} for issue #${issueNum}`);
 
@@ -111,10 +119,11 @@ export async function fixIssue(
 
   const result = await tool.run({
     prompt,
-    cwd,
+    cwd: wtPath,
     jobName: `fix-issue-${issueNum}`,
     fallbackApiKey: config.defaults.fallback_api_key,
     verbose,
+    model,
     onChunk: (chunk) => appendFile(agentLogFile, chunk).catch(() => {}),
     maxTurns: (toolConfig["max-turns"] as number) ?? undefined,
     allowedTools: (toolConfig["allowed-tools"] as string[]) ?? undefined,
@@ -126,12 +135,14 @@ export async function fixIssue(
   const parsed = parseToolOutput(result.output);
 
   // Check if there are actual changes
-  const diffResult = await $`git diff --stat`.cwd(cwd).text();
+  const diffResult = await $`git diff --stat`.cwd(wtPath).text();
   const hasChanges = diffResult.trim().length > 0;
 
   if (parsed.status === "stuck" || (!hasChanges && parsed.status !== "done")) {
     // Agent is stuck or made no changes
     const question = parsed.message || "Could not determine how to fix this issue. Please provide more details.";
+
+    await removeWorktree(wtPath, cwd).catch(() => {});
 
     await saveState(stateDir, repoContext.repoName, issueNum, {
       issueNumber: issueNum,
@@ -151,30 +162,22 @@ export async function fixIssue(
     await removeLabel(issueNum, LABELS.inProgress, cwd);
     await addLabel(issueNum, LABELS.waiting, cwd);
 
-    // Go back to default branch if no changes
-    if (!hasChanges) {
-      await $`git checkout ${repoContext.defaultBranch}`.cwd(cwd);
-      await $`git branch -D ${branch}`.cwd(cwd).nothrow();
-    }
-
     logger.summary(`Issue #${issueNum}: stuck — asked question on issue`);
     return { success: false };
   }
 
   if (!hasChanges) {
     await removeLabel(issueNum, LABELS.inProgress, cwd);
-    await $`git checkout ${repoContext.defaultBranch}`.cwd(cwd);
-    await $`git branch -D ${branch}`.cwd(cwd).nothrow();
+    await removeWorktree(wtPath, cwd);
     logger.summary(`Issue #${issueNum}: no changes made`);
     return { success: false };
   }
 
   // Commit, push, create PR
-  // Exclude .claude/worktrees — Claude Code may create worktrees during the run
-  await $`git add -A`.cwd(cwd);
-  await $`git restore --staged .claude/worktrees`.cwd(cwd).nothrow();
-  await $`git commit -m ${`fix: ${issue.title} (fixes #${issueNum})`}`.cwd(cwd);
-  await $`git push -u origin ${branch}`.cwd(cwd);
+  await $`git add -A`.cwd(wtPath);
+  await $`git restore --staged .claude/worktrees`.cwd(wtPath).nothrow();
+  await $`git commit -m ${`fix: ${issue.title} (fixes #${issueNum})`}`.cwd(wtPath);
+  await $`git push -u origin ${branch}`.cwd(wtPath);
 
   const prUrl = await createPullRequest(
     {
@@ -185,48 +188,16 @@ export async function fixIssue(
     cwd
   );
 
-  // Run tests before merging
-  if (repoContext.testCommand) {
-    logger.detail(`Running tests: ${repoContext.testCommand}`);
-    const [cmd, ...cmdArgs] = repoContext.testCommand.split(" ");
-    const testProc = Bun.spawn([cmd, ...cmdArgs], { cwd, stdout: "pipe", stderr: "pipe" });
-    const testOut = await new Response(testProc.stdout).text();
-    const testErr = await new Response(testProc.stderr).text();
-    const testExit = await testProc.exited;
+  const prNumber = extractPRNumber(prUrl);
+  await addPRLabel(prNumber, LABELS.needsVerify, cwd);
 
-    if (testExit !== 0) {
-      await commentOnIssue(
-        issueNum,
-        formatIssueComment("waiting", `Tests failed — not merging.\n\n\`\`\`\n${(testOut + testErr).slice(0, 3000)}\n\`\`\``),
-        cwd
-      );
-      process.off("SIGINT", cleanup);
-      process.off("SIGTERM", cleanup);
-      await removeLabel(issueNum, LABELS.inProgress, cwd);
-      await addLabel(issueNum, LABELS.failed, cwd);
-      logger.summary(`Issue #${issueNum}: tests failed — PR created but not merged: ${prUrl}`);
-      return { success: false, prUrl };
-    }
-    logger.detail("Tests passed.");
-  }
-
-  await mergePullRequest(prUrl, cwd);
-
-  await commentOnIssue(
-    issueNum,
-    formatIssueComment("done", `Tests passed. Merged PR: ${prUrl}`),
-    cwd
-  );
+  await removeWorktree(wtPath, cwd);
   process.off("SIGINT", cleanup);
   process.off("SIGTERM", cleanup);
   await removeLabel(issueNum, LABELS.inProgress, cwd);
   await clearState(stateDir, repoContext.repoName, issueNum);
 
-  // Go back to default branch and pull merged changes
-  await $`git checkout ${repoContext.defaultBranch}`.cwd(cwd);
-  await $`git pull`.cwd(cwd);
-
-  logger.summary(`Issue #${issueNum}: fixed and merged — ${prUrl}`);
+  logger.summary(`Issue #${issueNum}: PR created — ${prUrl}`);
   return { success: true, prUrl };
 }
 

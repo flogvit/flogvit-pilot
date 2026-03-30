@@ -3,11 +3,13 @@ import { readFile } from "fs/promises";
 import { join } from "path";
 
 export interface ToolConfig {
-  [key: string]: string | number | boolean | string[];
+  model?: string;
+  [key: string]: string | number | boolean | string[] | undefined;
 }
 
 export interface CommandConfig {
   tool?: string;
+  retry_model?: string;
   [key: string]: string | number | boolean | string[] | undefined;
 }
 

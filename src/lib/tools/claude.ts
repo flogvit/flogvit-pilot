@@ -63,6 +63,10 @@ export class ClaudeRunner implements ToolRunner {
       args.push("--name", opts.jobName);
     }
 
+    if (opts.model) {
+      args.push("--model", opts.model);
+    }
+
     return args;
   }
 
