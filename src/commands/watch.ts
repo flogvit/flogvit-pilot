@@ -83,12 +83,16 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
     await fixIssue(issue.number, config, cwd, false, retryModel);
   }
 
-  // 6. Check for answered waiting issues → set needs-triage
+  // 6. Check for answered waiting issues → set needs-triage (reset triageCount so hard limit doesn't block)
   const waitingIssues = byLabel(LABELS.waiting);
   const waitingWithComments = await Promise.all(waitingIssues.map((i) => getIssue(i.number, cwd)));
   const answeredNums = findAnsweredIssues(waitingWithComments, "🤖 **flogvit-coder**");
   for (const num of answeredNums) {
     console.log(`Issue #${num} has been answered, setting needs-triage...`);
+    const existingState = await loadState(stateDir, repoName, num);
+    if (existingState) {
+      await saveState(stateDir, repoName, num, { ...existingState, triageCount: 0 });
+    }
     await removeLabel(num, LABELS.waiting, cwd);
     await addLabel(num, LABELS.needsTriage, cwd);
   }
@@ -317,6 +321,10 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         activeJobs.set(jobName, { label: waitingIssue.title, startedAt: Date.now(), stage: "triage" });
         log(jobName, `re-triaging answered issue #${num}`);
         (async () => {
+          const existingState = await loadState(stateDir, repoName, num);
+          if (existingState) {
+            await saveState(stateDir, repoName, num, { ...existingState, triageCount: 0 });
+          }
           await removeLabel(num, LABELS.waiting, cwd);
           await addLabel(num, LABELS.needsTriage, cwd);
         })().then(() => {
