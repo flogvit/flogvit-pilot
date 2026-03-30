@@ -417,10 +417,94 @@ cd /Users/vhanssen/WebstormProjects/flogvit/flogvit-coder && git add src/lib/pip
 
 ---
 
-## Task 4: fix-issue refactor
+## Task 4: fix-issue refactor + model aliases
 
 **Files:**
-- Modify: `src/commands/fix-issue.ts`
+- Modify: `src/lib/config.ts` — add `model?` to ToolConfig, `retry_model?` to CommandConfig
+- Modify: `src/lib/tool-runner.ts` — add `model?` to ToolRunnerOptions
+- Modify: `src/lib/tools/claude.ts` — pass `--model` flag when model is set
+- Modify: `src/commands/fix-issue.ts` — use worktree, stop at PR, pass model from config
+
+### Model alias sub-task
+
+**Step 0a: Add `model` to ToolConfig and `retry_model` to CommandConfig in src/lib/config.ts**
+
+`ToolConfig` already has `[key: string]: string | number | boolean | string[]` so `model` is stored automatically. But add explicit typed fields for IDE support:
+
+```typescript
+export interface ToolConfig {
+  model?: string;
+  [key: string]: string | number | boolean | string[] | undefined;
+}
+
+export interface CommandConfig {
+  tool?: string;
+  retry_model?: string;
+  [key: string]: string | number | boolean | string[] | undefined;
+}
+```
+
+**Step 0b: Add `model?` to ToolRunnerOptions in src/lib/tool-runner.ts**
+
+```typescript
+export interface ToolRunnerOptions {
+  prompt: string;
+  cwd: string;
+  jobName?: string;
+  fallbackApiKey?: string;
+  verbose?: boolean;
+  model?: string;
+  onChunk?: (chunk: string) => void;
+  allowedTools?: string[];
+  maxTurns?: number;
+}
+```
+
+**Step 0c: Pass `--model` in ClaudeRunner.buildArgs in src/lib/tools/claude.ts**
+
+Add after the `--name` block:
+
+```typescript
+    if (opts.model) {
+      args.push("--model", opts.model);
+    }
+```
+
+**Step 0d: Pass `model` and `retry_model` from fix-issue**
+
+In `fixIssue()`, accept an optional `retryModel` parameter and pass it through:
+
+```typescript
+export async function fixIssue(
+  issueNum: number,
+  config: Config,
+  cwd: string,
+  verbose: boolean = false,
+  retryModel?: string
+): Promise<{ success: boolean; prUrl?: string }>
+```
+
+Then in the `tool.run()` call:
+```typescript
+  const commandConfig = config.commands["fix-issue"] ?? {};
+  const model = retryModel ?? (config.tools[toolName]?.model as string | undefined);
+  const result = await tool.run({
+    ...
+    model,
+    ...
+  });
+```
+
+In the config, users can set:
+```toml
+[tools.claude]
+model = "sonnet"
+
+[commands.fix-issue]
+retry_model = "opus"
+```
+
+Watch will call `fixIssue(num, config, cwd, false, commandConfig.retry_model)` when re-trying after `changes-requested`.
 
 - [ ] **Step 1: Update imports in fix-issue.ts**
 
