@@ -16,7 +16,7 @@ export async function run(args: string[], config: Config, cwd: string): Promise<
   }
 
   const homeDir = process.env.HOME ?? homedir();
-  const stateDir = resolve(homeDir, ".flogvit-coder", "state");
+  const stateDir = resolve(homeDir, ".flogvit-pilot", "state");
   const repoName = basename(cwd);
   const repoSlug = await getRepoSlug(cwd);
 

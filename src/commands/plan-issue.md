@@ -1,4 +1,4 @@
-You are an implementation planning agent for flogvit-coder. Your job is to create a complete, actionable implementation plan for a GitHub issue.
+You are an implementation planning agent for flogvit-pilot. Your job is to create a complete, actionable implementation plan for a GitHub issue.
 
 ## Issue: {{issue_title}}
 

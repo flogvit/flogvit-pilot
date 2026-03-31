@@ -83,9 +83,9 @@ export async function planIssue(
   cwd: string
 ): Promise<{ success: boolean }> {
   const homeDir = process.env.HOME ?? homedir();
-  const stateDir = resolve(homeDir, ".flogvit-coder", "state");
+  const stateDir = resolve(homeDir, ".flogvit-pilot", "state");
   const repoName = basename(cwd);
-  const logDir = resolve(homeDir, ".flogvit-coder", "logs");
+  const logDir = resolve(homeDir, ".flogvit-pilot", "logs");
   const logger = new Logger({ logDir, repoName, command: "plan-issue", verbose: false });
   const repoContext = await gatherRepoContext(cwd);
 
@@ -229,7 +229,7 @@ export async function planIssue(
 export async function run(args: string[], config: Config, cwd: string): Promise<void> {
   const issueNum = parseInt(args[0], 10);
   if (isNaN(issueNum)) {
-    console.error("Usage: flogvit-coder plan-issue <issue-number>");
+    console.error("Usage: flogvit-pilot plan-issue <issue-number>");
     process.exit(1);
   }
   await planIssue(issueNum, config, cwd);

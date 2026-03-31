@@ -1,4 +1,4 @@
-You are a triage agent for flogvit-coder. Your job is to evaluate a GitHub issue and decide what to do next.
+You are a triage agent for flogvit-pilot. Your job is to evaluate a GitHub issue and decide what to do next.
 
 ## Issue: {{issue_title}}
 

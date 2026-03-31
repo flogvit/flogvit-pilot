@@ -52,8 +52,8 @@ export async function triageIssue(
   failureContext?: string
 ): Promise<{ verdict: "autofix" | "needs-plan" | "waiting" | "close" }> {
   const homeDir = process.env.HOME ?? homedir();
-  const stateDir = resolve(homeDir, ".flogvit-coder", "state");
-  const logDir = resolve(homeDir, ".flogvit-coder", "logs");
+  const stateDir = resolve(homeDir, ".flogvit-pilot", "state");
+  const logDir = resolve(homeDir, ".flogvit-pilot", "logs");
   const repoContext = await gatherRepoContext(cwd);
   const logger = new Logger({ logDir, repoName: basename(cwd), command: "triage", verbose: false });
   const repoName = basename(cwd);
@@ -169,7 +169,7 @@ export async function triageIssue(
 export async function run(args: string[], config: Config, cwd: string): Promise<void> {
   const issueNum = parseInt(args[0], 10);
   if (isNaN(issueNum)) {
-    console.error("Usage: flogvit-coder triage <issue-number>");
+    console.error("Usage: flogvit-pilot triage <issue-number>");
     process.exit(1);
   }
 

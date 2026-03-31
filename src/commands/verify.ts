@@ -20,7 +20,7 @@ export async function verifyPR(
   verbose = false
 ): Promise<{ success: boolean }> {
   const homeDir = process.env.HOME ?? homedir();
-  const logDir = resolve(homeDir, ".flogvit-coder", "logs");
+  const logDir = resolve(homeDir, ".flogvit-pilot", "logs");
   const repoName = basename(cwd);
   const logger = new Logger({ logDir, repoName, command: "verify", verbose });
 
@@ -89,7 +89,7 @@ export async function verifyPR(
 export async function run(args: string[], config: Config, cwd: string): Promise<void> {
   const prNumber = parseInt(args[0], 10);
   if (isNaN(prNumber)) {
-    console.error("Usage: flogvit-coder verify <pr-number>");
+    console.error("Usage: flogvit-pilot verify <pr-number>");
     process.exit(1);
   }
   const verbose = args.includes("--verbose") || args.includes("-v");
