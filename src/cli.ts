@@ -34,6 +34,9 @@ const COMMANDS: Record<string, () => Promise<CommandModule>> = {
   "audit-pr": () => import("./commands/audit-pr"),
   "pr-review": () => import("./commands/pr-review"),
   merge: () => import("./commands/merge"),
+  work: () => import("./commands/work"),
+  tail: () => import("./commands/tail"),
+  develop: () => import("./commands/develop"),
 };
 
 function parseGlobalFlags(argv: string[]): {
@@ -76,12 +79,12 @@ async function main() {
   const rawArgs = process.argv.slice(2);
 
   if (rawArgs.length === 0 || rawArgs[0] === "--help" || rawArgs[0] === "-h") {
-    console.log(`flogvit-coder v0.1.0
+    console.log(`flogvit-pilot v0.1.0
 
-Usage: flogvit-coder <command> [options]
+Usage: flogvit-pilot <command> [options]
 
 Commands:
-  init                Set up flogvit-coder in current repo
+  init                Set up flogvit-pilot in current repo
   fix-issue <#>       Fix a GitHub issue and create PR
   fix-issues          Fix all issues labeled 'autofix'
   watch               Check for new work (cron-friendly)
@@ -103,6 +106,9 @@ Commands:
   audit-pr <#>        Security audit of a PR → advance to approved
   pr-review <#>       Review a pull request
   merge               Merge all approved PRs
+  work <#>            Interactive Claude Code session on an issue
+  tail [#]            Live-stream output of a running background job
+  develop             Analyse recent logs and self-fix bugs (requires bun link)
 
 Options:
   --tool <name>       Override AI tool (claude, aider)
@@ -116,7 +122,7 @@ Options:
 
   if (!command || !COMMANDS[command]) {
     console.error(`Unknown command: ${command}`);
-    console.error(`Run 'flogvit-coder --help' for available commands.`);
+    console.error(`Run 'flogvit-pilot --help' for available commands.`);
     process.exit(1);
   }
 
