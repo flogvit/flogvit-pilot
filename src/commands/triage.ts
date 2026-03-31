@@ -108,13 +108,14 @@ export async function triageIssue(
   const toolName = resolveToolForCommand(config, "triage");
   const tool = getTool(toolName);
 
+  const toolConfig = config.tools[toolName] ?? {};
   const result = await tool.run({
     prompt,
     cwd,
     jobName: `triage-${issueNum}`,
     fallbackApiKey: config.defaults.fallback_api_key,
-    maxTurns: 1,
-    allowedTools: [],
+    maxTurns: (toolConfig["max-turns"] as number) ?? 5,
+    allowedTools: (toolConfig["allowed-tools"] as string[]) ?? undefined,
   });
 
   logger.detail(`Triage output for #${issueNum}:\n${result.output}`);

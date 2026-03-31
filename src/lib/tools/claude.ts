@@ -55,8 +55,13 @@ export class ClaudeRunner implements ToolRunner {
       args.push("--max-turns", opts.maxTurns);
     }
 
-    if (opts.allowedTools && opts.allowedTools.length > 0) {
-      args.push("--allowedTools", opts.allowedTools.join(","));
+    if (opts.allowedTools !== undefined) {
+      if (opts.allowedTools.length > 0) {
+        args.push("--allowedTools", opts.allowedTools.join(","));
+      } else {
+        // Empty array means no tools allowed
+        args.push("--allowedTools", "none");
+      }
     }
 
     if (opts.jobName) {
