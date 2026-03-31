@@ -10,8 +10,10 @@ import {
   removeLabel,
   commentOnIssue,
   formatIssueComment,
+  createIssue,
   LABELS,
 } from "../lib/github";
+import { Logger } from "../lib/logger";
 import { gatherRepoContext } from "../lib/context";
 import { loadTemplate, renderTemplate } from "../lib/template";
 import { loadState, saveState } from "../lib/state";
@@ -39,6 +41,30 @@ export function parsePlanOutput(output: string): PlanVerdict {
   return { verdict: "unknown" };
 }
 
+export interface SubIssue {
+  title: string;
+  body: string;
+  labels: string[];
+  dependsOn: number[];
+}
+
+export function parseSubIssues(output: string): SubIssue[] | null {
+  const match = output.match(/FLOGVIT-CODER:ISSUES:BEGIN\s*([\s\S]*?)\s*FLOGVIT-CODER:ISSUES:END/);
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(match[1]);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.map((item) => ({
+      title: String(item.title ?? ""),
+      body: String(item.body ?? ""),
+      labels: Array.isArray(item.labels) ? item.labels.map(String) : [],
+      dependsOn: Array.isArray(item.dependsOn) ? item.dependsOn.map(Number) : [],
+    }));
+  } catch {
+    return null;
+  }
+}
+
 export function slugify(title: string): string {
   const slug = title
     .toLowerCase()
@@ -59,6 +85,8 @@ export async function planIssue(
   const homeDir = process.env.HOME ?? homedir();
   const stateDir = resolve(homeDir, ".flogvit-coder", "state");
   const repoName = basename(cwd);
+  const logDir = resolve(homeDir, ".flogvit-coder", "logs");
+  const logger = new Logger({ logDir, repoName, command: "plan-issue", verbose: false });
   const repoContext = await gatherRepoContext(cwd);
 
   const existingState = await loadState(stateDir, repoName, issueNum);
@@ -134,15 +162,48 @@ export async function planIssue(
   await removeLabel(issueNum, LABELS.needsPlan, cwd);
 
   if (parsed.verdict === "ready") {
-    await addLabel(issueNum, LABELS.autofix, cwd);
-    await commentOnIssue(
-      issueNum,
-      formatIssueComment(
-        "plan klar",
-        `Implementasjonsplan er generert og klar til utførelse.\n\nSe planen: \`${planFile}\`\n\nJeg starter implementasjonen automatisk.`
-      ),
-      cwd
-    );
+    const subIssues = parseSubIssues(result.output);
+
+    if (subIssues && subIssues.length > 0) {
+      // Create sub-issues in order, resolving dependsOn indices to actual issue numbers
+      const indexToNumber = new Map<number, number>();
+      for (let i = 0; i < subIssues.length; i++) {
+        const sub = subIssues[i];
+        const depNums = sub.dependsOn
+          .map((idx) => indexToNumber.get(idx))
+          .filter((n): n is number => n !== undefined);
+        const body =
+          depNums.length > 0
+            ? `Depends-on: ${depNums.map((n) => `#${n}`).join(", ")}\n\n${sub.body}`
+            : sub.body;
+        const labels = [...new Set([...sub.labels, LABELS.autofix])];
+        const createdNum = await createIssue(sub.title, body, labels, cwd);
+        indexToNumber.set(i, createdNum);
+        logger.summary(`Created sub-issue #${createdNum}: ${sub.title}`);
+      }
+
+      const subList = [...indexToNumber.values()].map((n) => `- #${n}`).join("\n");
+      await addLabel(issueNum, LABELS.waiting, cwd);
+      await commentOnIssue(
+        issueNum,
+        formatIssueComment(
+          "plan klar — sub-issues opprettet",
+          `Implementasjonsplan er generert og lagret i \`${planFile}\`.\n\n${indexToNumber.size} sub-issues er opprettet og vil kjøres i riktig rekkefølge:\n\n${subList}`
+        ),
+        cwd
+      );
+    } else {
+      await addLabel(issueNum, LABELS.autofix, cwd);
+      await commentOnIssue(
+        issueNum,
+        formatIssueComment(
+          "plan klar",
+          `Implementasjonsplan er generert og klar til utførelse.\n\nSe planen: \`${planFile}\`\n\nJeg starter implementasjonen automatisk.`
+        ),
+        cwd
+      );
+    }
+    await logger.flush();
     return { success: true };
   }
 
@@ -161,6 +222,7 @@ export async function planIssue(
     ),
     cwd
   );
+  await logger.flush();
   return { success: false };
 }
 

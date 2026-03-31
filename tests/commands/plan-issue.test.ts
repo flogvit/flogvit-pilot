@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { parsePlanOutput, slugify } from "../../src/commands/plan-issue";
+import { parsePlanOutput, slugify, parseSubIssues } from "../../src/commands/plan-issue";
 
 describe("parsePlanOutput", () => {
   test("detects READY verdict", () => {
@@ -50,5 +50,44 @@ describe("slugify", () => {
 
   test("returns 'untitled' for all-special-char titles", () => {
     expect(slugify("!!!")).toBe("untitled");
+  });
+});
+
+describe("parseSubIssues", () => {
+  test("parses a valid sub-issues block", () => {
+    const output = `FLOGVIT-CODER:PLAN:READY
+FLOGVIT-CODER:ISSUES:BEGIN
+[
+  {"title": "Task 1", "body": "Do X", "labels": ["enhancement"], "dependsOn": []},
+  {"title": "Task 2", "body": "Do Y", "labels": ["enhancement"], "dependsOn": [0]}
+]
+FLOGVIT-CODER:ISSUES:END`;
+    const result = parseSubIssues(output);
+    expect(result).not.toBeNull();
+    expect(result!.length).toBe(2);
+    expect(result![0].title).toBe("Task 1");
+    expect(result![0].dependsOn).toEqual([]);
+    expect(result![1].dependsOn).toEqual([0]);
+  });
+
+  test("returns null when no block present", () => {
+    expect(parseSubIssues("FLOGVIT-CODER:PLAN:READY")).toBeNull();
+  });
+
+  test("returns null for invalid JSON", () => {
+    const output = `FLOGVIT-CODER:ISSUES:BEGIN
+not json
+FLOGVIT-CODER:ISSUES:END`;
+    expect(parseSubIssues(output)).toBeNull();
+  });
+
+  test("defaults missing fields", () => {
+    const output = `FLOGVIT-CODER:ISSUES:BEGIN
+[{"title": "Minimal"}]
+FLOGVIT-CODER:ISSUES:END`;
+    const result = parseSubIssues(output);
+    expect(result![0].body).toBe("");
+    expect(result![0].labels).toEqual([]);
+    expect(result![0].dependsOn).toEqual([]);
   });
 });

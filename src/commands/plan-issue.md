@@ -65,6 +65,36 @@ The plan must follow this structure:
 - Cover all aspects of the issue
 - Follow existing patterns in the codebase
 
+## Sub-issues (optional)
+
+If the plan consists of 2 or more clearly distinct, independently completable tasks with a natural order (each can be coded, committed, and reviewed separately), you SHOULD create sub-issues instead of a single autofix.
+
+After the verdict line, output a JSON block in this exact format:
+
+FLOGVIT-CODER:ISSUES:BEGIN
+[
+  {
+    "title": "Brief task title (starts with the issue number context)",
+    "body": "Full self-contained issue description. Reference specific files and methods. Do not assume the reader has seen the plan.",
+    "labels": ["enhancement"],
+    "dependsOn": []
+  },
+  {
+    "title": "Second task title",
+    "body": "Description of what to do, referencing files. This task builds on task 0.",
+    "labels": ["enhancement"],
+    "dependsOn": [0]
+  }
+]
+FLOGVIT-CODER:ISSUES:END
+
+Rules for sub-issues:
+- `dependsOn` uses 0-based indices into this array (not GitHub issue numbers)
+- Only add `dependsOn` when there is a real code dependency (task B cannot compile or function without task A)
+- Issue bodies must be self-contained — include all context needed to implement the task
+- Use the same domain labels as the parent issue (enhancement, bug, etc.)
+- If the plan is a single coherent change, do NOT create sub-issues — just output the verdict
+
 ## Verdict
 
 After saving the plan file, end your response with EXACTLY ONE of these on the last line:
