@@ -270,7 +270,7 @@ function renderUI(repoName: string, queue: { stage: string; prTitle: string; prN
   }
 }
 
-async function watchLive(config: Config, cwd: string, selfImproveThreshold?: number): Promise<void> {
+async function watchLive(config: Config, cwd: string, selfImproveThreshold?: number, maxJobsOverride?: number): Promise<void> {
   const repoName = basename(cwd);
   const homeDir = process.env.HOME ?? homedir();
   const stateDir = resolve(homeDir, ".flogvit-pilot", "state");
@@ -353,7 +353,7 @@ async function watchLive(config: Config, cwd: string, selfImproveThreshold?: num
         log(`pr-${pr.number}`, `unlabeled PR → needs-verify`);
       }
 
-      const maxJobs = config.defaults.max_concurrent_jobs ?? 3;
+      const maxJobs = maxJobsOverride ?? config.defaults.max_concurrent_jobs ?? 3;
 
       // TRIAGE — exempt from cap: determines priority of everything else
       for (const issue of byLabel(LABELS.needsTriage)) {
@@ -600,20 +600,24 @@ export async function run(args: string[], config: Config, cwd: string): Promise<
     selfImproveThreshold = parts[1] ? parseInt(parts[1], 10) : 3;
   }
 
+  // --jobs N — override max concurrent jobs (overrides config default)
+  const jobsIndex = args.indexOf("--jobs");
+  const maxJobsOverride = jobsIndex !== -1 ? parseInt(args[jobsIndex + 1], 10) : undefined;
+
   if (reposValue) {
     const repos = reposValue.split(",").map((r) => r.trim());
     for (const repo of repos) {
       const resolvedPath = resolve(repo);
       console.log(`Checking ${resolvedPath}...`);
       if (live) {
-        await watchLive(config, resolvedPath, selfImproveThreshold);
+        await watchLive(config, resolvedPath, selfImproveThreshold, maxJobsOverride);
       } else {
         await watchCron(config, resolvedPath);
       }
     }
   } else {
     if (live) {
-      await watchLive(config, cwd, selfImproveThreshold);
+      await watchLive(config, cwd, selfImproveThreshold, maxJobsOverride);
     } else {
       await watchCron(config, cwd);
     }

@@ -24,6 +24,7 @@ import { gatherRepoContext } from "../lib/context";
 import { loadTemplate, renderTemplate } from "../lib/template";
 import { saveState, loadState, clearState } from "../lib/state";
 import { Logger } from "../lib/logger";
+import { stageRelevantFiles } from "../lib/stage-files";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -242,9 +243,7 @@ export async function fixIssue(
 
   // Commit (if uncommitted changes remain) then push
   if (hasUncommitted) {
-    await $`git add -A`.cwd(wtPath).nothrow();
-    await $`git restore --staged .claude/worktrees`.cwd(wtPath).nothrow();
-    await $`git restore --staged .cargo/config.toml`.cwd(wtPath).nothrow();
+    await stageRelevantFiles(wtPath, { title: issue.title, body: issue.body }, config);
     const commitResult = await $`git commit -m ${`fix: ${issue.title} (fixes #${issueNum})`}`.cwd(wtPath).nothrow();
     if (commitResult.exitCode !== 0) {
       logger.detail(`git commit failed (exit ${commitResult.exitCode}): ${commitResult.stderr}`);

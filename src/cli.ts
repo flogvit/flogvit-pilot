@@ -34,6 +34,8 @@ const COMMANDS: Record<string, () => Promise<CommandModule>> = {
   "audit-pr": () => import("./commands/audit-pr"),
   "pr-review": () => import("./commands/pr-review"),
   merge: () => import("./commands/merge"),
+  "add-issue": () => import("./commands/add-issue"),
+  "import-plan": () => import("./commands/import-plan"),
   work: () => import("./commands/work"),
   tail: () => import("./commands/tail"),
   develop: () => import("./commands/develop"),
@@ -106,6 +108,7 @@ Commands:
   audit-pr <#>        Security audit of a PR → advance to approved
   pr-review <#>       Review a pull request
   merge               Merge all approved PRs
+  add-issue <title>   Create a GitHub issue and add needs-triage label
   work <#>            Interactive Claude Code session on an issue
   tail [#]            Live-stream output of a running background job
   develop             Analyse recent logs and self-fix bugs (requires bun link)

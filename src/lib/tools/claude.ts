@@ -49,7 +49,7 @@ export class ClaudeRunner implements ToolRunner {
   name = "claude";
 
   buildArgs(opts: ToolRunnerOptions): (string | number)[] {
-    const args: (string | number)[] = ["-p", opts.prompt, "--output-format", "text"];
+    const args: (string | number)[] = ["-p", opts.prompt, "--output-format", "text", "--dangerously-skip-permissions"];
 
     if (opts.maxTurns) {
       args.push("--max-turns", opts.maxTurns);

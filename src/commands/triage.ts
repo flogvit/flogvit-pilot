@@ -115,7 +115,7 @@ export async function triageIssue(
     jobName: `triage-${issueNum}`,
     fallbackApiKey: config.defaults.fallback_api_key,
     maxTurns: (toolConfig["max-turns"] as number) ?? 5,
-    allowedTools: (toolConfig["allowed-tools"] as string[]) ?? undefined,
+    allowedTools: [],
   });
 
   logger.detail(`Triage output for #${issueNum}:\n${result.output}`);

@@ -51,6 +51,7 @@ export async function verifyPR(
     process.off("SIGINT", cleanup);
     process.off("SIGTERM", cleanup);
     await removePRLabel(prNumber, LABELS.inProgress, cwd);
+    await logger.flush();
     return { success: true };
   }
 
@@ -76,6 +77,7 @@ export async function verifyPR(
     );
     await addPRLabel(prNumber, LABELS.failed, cwd);
     logger.summary(`PR #${prNumber}: tests failed`);
+    await logger.flush();
     return { success: false };
   }
 
@@ -83,6 +85,7 @@ export async function verifyPR(
   await removePRLabel(prNumber, LABELS.failed, cwd);
   await addPRLabel(prNumber, LABELS.needsReview, cwd);
   logger.summary(`PR #${prNumber}: tests passed`);
+  await logger.flush();
   return { success: true };
 }
 

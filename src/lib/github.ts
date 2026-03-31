@@ -230,16 +230,41 @@ export async function createIssue(
   title: string,
   body: string,
   labels: string[],
-  cwd: string
+  cwd: string,
+  milestone?: number
 ): Promise<number> {
   const args: string[] = ["issue", "create", "--title", title, "--body", body];
   for (const label of labels) {
     args.push("--label", label);
   }
+  if (milestone !== undefined) {
+    args.push("--milestone", String(milestone));
+  }
   const result = await $`gh ${args}`.cwd(cwd).text();
   const match = result.trim().match(/\/issues\/(\d+)$/m);
   if (!match) throw new Error(`Failed to parse issue number from gh output: ${result}`);
   return parseInt(match[1], 10);
+}
+
+export async function getRepoSlug(cwd: string): Promise<string> {
+  const result = await $`gh repo view --json nameWithOwner -q .nameWithOwner`.cwd(cwd).text();
+  return result.trim();
+}
+
+export async function createMilestone(title: string, description: string, cwd: string): Promise<number> {
+  const slug = await getRepoSlug(cwd);
+  const result = await $`gh api repos/${slug}/milestones --method POST --field title=${title} --field description=${description}`.cwd(cwd).text();
+  const data = JSON.parse(result);
+  return data.number as number;
+}
+
+export async function findMilestone(title: string, cwd: string): Promise<number | null> {
+  const slug = await getRepoSlug(cwd);
+  const result = await $`gh api repos/${slug}/milestones`.cwd(cwd).nothrow().text();
+  if (!result.trim()) return null;
+  const data = JSON.parse(result) as { number: number; title: string }[];
+  const found = data.find((m) => m.title === title);
+  return found?.number ?? null;
 }
 
 export async function createPullRequest(
@@ -254,7 +279,16 @@ export async function createPullRequest(
 }
 
 export async function mergePullRequest(prUrl: string, cwd: string): Promise<void> {
-  await $`gh pr merge ${prUrl} --squash --delete-branch`.cwd(cwd);
+  const result = await $`gh pr merge ${prUrl} --squash --delete-branch`.cwd(cwd).nothrow();
+  if (result.exitCode !== 0) {
+    // Tolerate failure if the PR is already merged (race condition or double-trigger)
+    const prNumber = prUrl.match(/\/pull\/(\d+)/)?.[1];
+    if (prNumber) {
+      const state = await $`gh pr view ${prNumber} --json state --jq .state`.cwd(cwd).nothrow().text();
+      if (state.trim() === "MERGED") return;
+    }
+    throw new Error(`gh pr merge failed (exit ${result.exitCode}): ${result.stderr}`);
+  }
 }
 
 export async function ensureLabels(cwd: string): Promise<void> {

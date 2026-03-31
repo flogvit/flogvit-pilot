@@ -24,6 +24,7 @@ import { loadTemplate, renderTemplate } from "../lib/template";
 import { loadState, saveState } from "../lib/state";
 import { Logger } from "../lib/logger";
 import { parseToolOutput, buildIssueCommentsSection } from "./fix-issue";
+import { stageRelevantFiles } from "../lib/stage-files";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -158,9 +159,7 @@ export async function fixPR(
 
   // Commit uncommitted changes (agent may have already committed)
   if (hasUncommitted) {
-    await $`git add -A`.cwd(wtPath).nothrow();
-    await $`git restore --staged .claude/worktrees`.cwd(wtPath).nothrow();
-    await $`git restore --staged .cargo/config.toml`.cwd(wtPath).nothrow();
+    await stageRelevantFiles(wtPath, { title: `PR #${prNumber}: ${issue.title}` }, config);
     const commitResult = await $`git commit -m ${"fix-pr: address review feedback"}`.cwd(wtPath).nothrow();
     if (commitResult.exitCode !== 0) {
       logger.detail(`git commit failed: ${commitResult.stderr}`);

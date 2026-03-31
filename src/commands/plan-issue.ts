@@ -18,6 +18,7 @@ import { gatherRepoContext } from "../lib/context";
 import { loadTemplate, renderTemplate } from "../lib/template";
 import { loadState, saveState } from "../lib/state";
 import { buildIssueCommentsSection } from "./fix-issue";
+import { importPlanFile } from "../lib/plan";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -193,15 +194,37 @@ export async function planIssue(
         cwd
       );
     } else {
-      await addLabel(issueNum, LABELS.autofix, cwd);
-      await commentOnIssue(
-        issueNum,
-        formatIssueComment(
-          "plan klar",
-          `Implementasjonsplan er generert og klar til utførelse.\n\nSe planen: \`${planFile}\`\n\nJeg starter implementasjonen automatisk.`
-        ),
-        cwd
-      );
+      // No JSON sub-issues — try to import tasks from the plan file itself
+      const imported = await importPlanFile({
+        planPath: resolve(cwd, planFile),
+        parentIssue: issueNum,
+        cwd,
+        autofix: true,
+      });
+
+      if (imported) {
+        const subList = imported.issueNumbers.map((n) => `- #${n}`).join("\n");
+        await addLabel(issueNum, LABELS.waiting, cwd);
+        await commentOnIssue(
+          issueNum,
+          formatIssueComment(
+            "plan klar — tasks opprettet",
+            `Implementasjonsplan er generert og lagret i \`${planFile}\`.\n\n${imported.issueNumbers.length} task-issues er opprettet under milestone og kjøres automatisk:\n\n${subList}`
+          ),
+          cwd
+        );
+      } else {
+        // Plan has no tasks — just fix it directly
+        await addLabel(issueNum, LABELS.autofix, cwd);
+        await commentOnIssue(
+          issueNum,
+          formatIssueComment(
+            "plan klar",
+            `Implementasjonsplan er generert og klar til utførelse.\n\nSe planen: \`${planFile}\`\n\nJeg starter implementasjonen automatisk.`
+          ),
+          cwd
+        );
+      }
     }
     await logger.flush();
     return { success: true };

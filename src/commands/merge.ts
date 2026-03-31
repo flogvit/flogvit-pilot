@@ -44,7 +44,7 @@ export async function run(args: string[], config: Config, cwd: string): Promise<
     }
   }
 
-  await $`git pull`.cwd(cwd);
+  await $`git pull`.cwd(cwd).nothrow();
   console.log("Pulled main. Done.");
 }
 
