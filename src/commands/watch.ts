@@ -17,6 +17,7 @@ import { run as mergeRun } from "./merge";
 import { worktreesBaseDir } from "../lib/worktree";
 import { PIPELINE_STAGES, STAGE_LABELS } from "../lib/pipeline";
 import { findAnsweredIssues } from "./watch-helpers";
+import { scanNewErrorLogs, runSupervisor, findSourceRoot } from "./develop";
 
 export { findAnsweredIssues } from "./watch-helpers";
 
@@ -230,6 +231,21 @@ const activeJobs = new Map<string, ActiveJob>();
 const recentLogs: string[] = [];
 const MAX_LOGS = 8;
 
+interface SupervisorStatus {
+  enabled: boolean;
+  selfImprove: boolean;
+  lastScanAt: number | null;
+  lastSummary: string | null;
+  running: boolean;
+}
+const supervisorStatus: SupervisorStatus = {
+  enabled: false,
+  selfImprove: false,
+  lastScanAt: null,
+  lastSummary: null,
+  running: false,
+};
+
 function log(jobName: string, msg: string) {
   const time = new Date().toLocaleTimeString("no");
   recentLogs.push(`  ${time}  ${jobName.padEnd(16)}  ${msg}`);
@@ -244,7 +260,7 @@ function renderUI(repoName: string, queue: { stage: string; prTitle: string; prN
   );
 
   if (activeJobs.size > 0) {
-    console.log("AKTIVE JOBBER");
+    console.log("ACTIVE JOBS");
     for (const [name, job] of activeJobs) {
       const elapsed = Math.floor((now - job.startedAt) / 1000);
       const m = Math.floor(elapsed / 60);
@@ -257,57 +273,64 @@ function renderUI(repoName: string, queue: { stage: string; prTitle: string; prN
   }
 
   if (queue.length > 0) {
-    console.log("KØ");
+    console.log("QUEUE");
     for (const item of queue) {
       console.log(`  → ${item.stage.padEnd(14)} PR #${item.prNumber}   ${item.prTitle}`);
     }
     console.log();
   }
 
+  if (supervisorStatus.enabled) {
+    const mode = supervisorStatus.selfImprove ? "supervisor + self-improve" : "supervisor";
+    const state = supervisorStatus.running
+      ? "● running"
+      : supervisorStatus.lastScanAt
+      ? `✓ last scan ${Math.floor((now - supervisorStatus.lastScanAt) / 1000)}s ago`
+      : "  waiting for first poll";
+    const summary = supervisorStatus.lastSummary ? `  ${supervisorStatus.lastSummary}` : "";
+    console.log(`SUPERVISOR  [${mode}]`);
+    console.log(`  ${state}${summary}`);
+    console.log();
+  }
+
   if (recentLogs.length > 0) {
-    console.log("SISTE LOGG");
+    console.log("RECENT LOG");
     for (const entry of recentLogs) console.log(entry);
   }
 }
 
-async function watchLive(config: Config, cwd: string, selfImproveThreshold?: number, maxJobsOverride?: number): Promise<void> {
+async function watchLive(config: Config, cwd: string, opts: {
+  supervisor: boolean;
+  selfImprove: boolean;
+  maxJobsOverride?: number;
+}): Promise<void> {
+  const { supervisor, selfImprove, maxJobsOverride } = opts;
   const repoName = basename(cwd);
   const homeDir = process.env.HOME ?? homedir();
   const stateDir = resolve(homeDir, ".flogvit-pilot", "state");
 
   let queue: { stage: string; prTitle: string; prNumber: number }[] = [];
   let running = true;
+  // Look back 1 hour on first scan to catch errors that predate this watch session
+  let lastLogScanTime = Date.now() - 60 * 60 * 1000;
 
-  // Self-improve: track infrastructure errors (ShellError etc.) across jobs
-  let sessionErrorCount = 0;
-  let developRunning = false;
+  // Resolve source root once for self-improve
+  const sourceRoot = selfImprove ? (await findSourceRoot() ?? undefined) : undefined;
+  if (selfImprove && !sourceRoot) {
+    log("startup", "warning: --self-improve requires bun link install of flogvit-pilot");
+  }
+
+  // Initialize supervisor status for UI
+  supervisorStatus.enabled = supervisor || selfImprove;
+  supervisorStatus.selfImprove = selfImprove;
+  supervisorStatus.running = false;
+  supervisorStatus.lastScanAt = null;
+  supervisorStatus.lastSummary = null;
 
   function onJobError(jobName: string, err: unknown) {
     const msg = String(err);
     activeJobs.delete(jobName);
     log(jobName, `error: ${msg.slice(0, 60)}`);
-
-    if (!selfImproveThreshold || developRunning) return;
-    // Only count infrastructure errors, not agent STUCK outcomes
-    if (msg.includes("ShellError") || msg.includes("Failed with exit code")) {
-      sessionErrorCount++;
-      if (sessionErrorCount >= selfImproveThreshold) {
-        sessionErrorCount = 0;
-        developRunning = true;
-        log("develop", `triggering self-improve after ${selfImproveThreshold} errors`);
-        Bun.spawn(["flogvit-pilot", "develop", "--auto"], {
-          cwd,
-          stdout: "inherit",
-          stderr: "inherit",
-        }).exited.then(() => {
-          developRunning = false;
-          log("develop", "done — review PR in flogvit-pilot repo");
-        }).catch(() => {
-          developRunning = false;
-          log("develop", "failed to run develop");
-        });
-      }
-    }
   }
 
   const cleanup = () => {
@@ -326,6 +349,8 @@ async function watchLive(config: Config, cwd: string, selfImproveThreshold?: num
 
   const poll = async () => {
     if (!running) return;
+
+    const pollStart = Date.now();
 
     try {
       // Fetch all open issues and PRs in two calls — filter locally
@@ -535,6 +560,30 @@ async function watchLive(config: Config, cwd: string, selfImproveThreshold?: num
     } catch (err) {
       log("poll", `error: ${String(err).slice(0, 80)}`);
     }
+
+    // Supervisor: scan new error logs after each poll cycle
+    if ((supervisor || selfImprove) && !supervisorStatus.running) {
+      const since = lastLogScanTime;
+      lastLogScanTime = pollStart;
+      supervisorStatus.lastScanAt = pollStart;
+      const errors = await scanNewErrorLogs(since).catch(() => []);
+      if (errors.length > 0) {
+        supervisorStatus.running = true;
+        activeJobs.set("supervisor", { label: `${errors.length} error(s) in logs`, startedAt: Date.now(), stage: "supervisor", model: "haiku" });
+        log("supervisor", `found ${errors.length} new error log(s)`);
+        runSupervisor({ targetCwd: cwd, errors, config, selfImprove, sourceRoot }).then(({ summary }) => {
+          activeJobs.delete("supervisor");
+          supervisorStatus.running = false;
+          supervisorStatus.lastSummary = summary;
+          log("supervisor", summary);
+        }).catch((err) => {
+          activeJobs.delete("supervisor");
+          supervisorStatus.running = false;
+          supervisorStatus.lastSummary = `error: ${String(err).slice(0, 50)}`;
+          log("supervisor", `error: ${String(err).slice(0, 60)}`);
+        });
+      }
+    }
   };
 
   // On startup, remove orphaned in-progress labels (no active jobs in this session)
@@ -592,17 +641,17 @@ export async function run(args: string[], config: Config, cwd: string): Promise<
   const reposFlag = args.find((a) => a.startsWith("--repos"));
   const reposValue = reposFlag ? args[args.indexOf(reposFlag) + 1] : undefined;
 
-  // --self-improve or --self-improve=N (default threshold: 3)
-  const selfImproveFlag = args.find((a) => a.startsWith("--self-improve"));
-  let selfImproveThreshold: number | undefined;
-  if (selfImproveFlag) {
-    const parts = selfImproveFlag.split("=");
-    selfImproveThreshold = parts[1] ? parseInt(parts[1], 10) : 3;
-  }
+  // --supervisor: monitor logs after every poll and take GitHub actions
+  const supervisor = args.includes("--supervisor");
+
+  // --self-improve: addon to --supervisor that also fixes flogvit-pilot source
+  const selfImprove = args.includes("--self-improve");
 
   // --jobs N — override max concurrent jobs (overrides config default)
   const jobsIndex = args.indexOf("--jobs");
   const maxJobsOverride = jobsIndex !== -1 ? parseInt(args[jobsIndex + 1], 10) : undefined;
+
+  const liveOpts = { supervisor: supervisor || selfImprove, selfImprove, maxJobsOverride };
 
   if (reposValue) {
     const repos = reposValue.split(",").map((r) => r.trim());
@@ -610,14 +659,14 @@ export async function run(args: string[], config: Config, cwd: string): Promise<
       const resolvedPath = resolve(repo);
       console.log(`Checking ${resolvedPath}...`);
       if (live) {
-        await watchLive(config, resolvedPath, selfImproveThreshold, maxJobsOverride);
+        await watchLive(config, resolvedPath, liveOpts);
       } else {
         await watchCron(config, resolvedPath);
       }
     }
   } else {
     if (live) {
-      await watchLive(config, cwd, selfImproveThreshold, maxJobsOverride);
+      await watchLive(config, cwd, liveOpts);
     } else {
       await watchCron(config, cwd);
     }

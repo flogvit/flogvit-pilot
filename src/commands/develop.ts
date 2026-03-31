@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { resolve, dirname, basename } from "path";
 import { homedir } from "os";
-import { readdir, readFile, stat, realpath, writeFile, unlink, access } from "fs/promises";
+import { readdir, readFile, stat, realpath } from "fs/promises";
 import type { Config } from "../lib/config";
 import { resolveToolForCommand } from "../lib/config";
 import { getTool } from "../lib/tool-runner";
@@ -10,8 +10,7 @@ import { getTool } from "../lib/tool-runner";
 // Source root resolution
 // ---------------------------------------------------------------------------
 
-async function findSourceRoot(): Promise<string | null> {
-  // Follow the symlink for `flogvit-pilot` back to the actual source file
+export async function findSourceRoot(): Promise<string | null> {
   const which = await $`which flogvit-pilot`.nothrow().text();
   const bin = which.trim();
   if (!bin) return null;
@@ -23,10 +22,9 @@ async function findSourceRoot(): Promise<string | null> {
     return null;
   }
 
-  // Walk up from the resolved path until we find package.json
   let dir = dirname(resolved);
   for (let i = 0; i < 6; i++) {
-    const hasPkg = await access(resolve(dir, "package.json")).then(() => true).catch(() => false);
+    const hasPkg = await readFile(resolve(dir, "package.json"), "utf-8").then(() => true).catch(() => false);
     if (hasPkg) return dir;
     const parent = dirname(dir);
     if (parent === dir) break;
@@ -36,35 +34,33 @@ async function findSourceRoot(): Promise<string | null> {
 }
 
 // ---------------------------------------------------------------------------
-// Log scanning
+// Log scanning — only new errors, concise excerpts
 // ---------------------------------------------------------------------------
 
-interface LogEntry {
+export interface LogError {
   repo: string;
   file: string;
-  content: string;
-  hasError: boolean;
+  excerpt: string; // last 600 chars max — enough context, not too much
 }
 
-async function scanLogs(hours: number): Promise<LogEntry[]> {
+export async function scanNewErrorLogs(since: number): Promise<LogError[]> {
   const homeDir = process.env.HOME ?? homedir();
   const logBase = resolve(homeDir, ".flogvit-pilot", "logs");
-  const cutoff = Date.now() - hours * 60 * 60 * 1000;
-  const entries: LogEntry[] = [];
+  const errors: LogError[] = [];
 
   const repos = await readdir(logBase).catch(() => [] as string[]);
   for (const repo of repos) {
     if (repo === "active") continue;
     const repoDir = resolve(logBase, repo);
-    const files = (await readdir(repoDir).catch(() => [] as string[])).sort().reverse();
+    const files = await readdir(repoDir).catch(() => [] as string[]);
 
     for (const file of files) {
-      if (file.endsWith("-agent.log")) continue; // agent output too large, skip
+      if (file.endsWith("-agent.log")) continue; // skip verbose agent output
       if (!file.endsWith(".log")) continue;
 
       const filePath = resolve(repoDir, file);
       const fileStat = await stat(filePath).catch(() => null);
-      if (!fileStat || fileStat.mtimeMs < cutoff) continue;
+      if (!fileStat || fileStat.mtimeMs <= since) continue;
 
       const content = await readFile(filePath, "utf-8").catch(() => "");
       if (!content.trim()) continue;
@@ -78,191 +74,129 @@ async function scanLogs(hours: number): Promise<LogEntry[]> {
         lower.includes("attempt 2") ||
         lower.includes("attempt 3");
 
-      entries.push({ repo, file, content, hasError });
+      if (hasError) {
+        errors.push({
+          repo,
+          file,
+          excerpt: content.trim().slice(-600), // tail of log — where errors usually appear
+        });
+      }
     }
   }
 
-  return entries;
-}
-
-function buildLogSummary(entries: LogEntry[]): string {
-  if (entries.length === 0) return "No recent logs found.";
-
-  const errorEntries = entries.filter((e) => e.hasError);
-  const okEntries = entries.filter((e) => !e.hasError);
-
-  const lines: string[] = [];
-
-  if (errorEntries.length > 0) {
-    lines.push(`## Logs with errors/failures (${errorEntries.length} files)\n`);
-    for (const e of errorEntries.slice(0, 20)) {
-      lines.push(`### ${e.repo}/${e.file}`);
-      lines.push("```");
-      lines.push(e.content.trim().slice(0, 1500));
-      lines.push("```\n");
-    }
-  }
-
-  if (okEntries.length > 0) {
-    lines.push(`## Successful runs (${okEntries.length} files — summaries only)\n`);
-    for (const e of okEntries.slice(0, 10)) {
-      const lastLine = e.content.trim().split("\n").pop() ?? "";
-      lines.push(`- ${e.repo}/${e.file}: ${lastLine}`);
-    }
-  }
-
-  return lines.join("\n");
+  return errors;
 }
 
 // ---------------------------------------------------------------------------
-// Prompt
+// Supervisor — monitors logs, acts on GitHub, optionally fixes source
 // ---------------------------------------------------------------------------
 
-function buildPrompt(sourceRoot: string, logSummary: string): string {
-  return `# flogvit-pilot self-improvement task
+export async function runSupervisor(opts: {
+  targetCwd: string;
+  errors: LogError[];
+  config: Config;
+  selfImprove: boolean;
+  sourceRoot?: string;
+}): Promise<{ success: boolean; summary: string }> {
+  const { targetCwd, errors, config, selfImprove, sourceRoot } = opts;
 
-You are looking at the source code of \`flogvit-pilot\` — the tool that is currently running.
-Source root: \`${sourceRoot}\`
+  const errorSection = errors
+    .slice(0, 10) // cap at 10 error logs
+    .map((e) => `**${e.repo}/${e.file}**\n\`\`\`\n${e.excerpt}\n\`\`\``)
+    .join("\n\n");
 
-Your job is to read the recent logs, identify any bugs or recurring failures, and fix them in the source code.
+  const selfImproveSection = selfImprove && sourceRoot ? `
+## Self-improvement
+You may also fix bugs in flogvit-pilot source at \`${sourceRoot}\`.
+After any code change, run \`bun tsc --noEmit\` in that directory to verify.
+Only fix real bugs visible in the logs above — do not refactor unrelated code.
+` : "";
 
-## Guidelines
+  const prompt = `# flogvit-pilot supervisor
 
-- Only fix real issues seen in the logs — do not refactor unrelated code
-- Run \`bun tsc --noEmit\` in the source root to verify TypeScript compiles after changes
-- Do not add hardcoded test data or debug logging
-- Key source files: \`src/commands/fix-issue.ts\`, \`src/commands/fix-pr.ts\`, \`src/commands/watch.ts\`, \`src/lib/github.ts\`, \`src/lib/worktree.ts\`
+You are the supervisor for the flogvit-pilot pipeline running on \`${basename(targetCwd)}\`.
 
-## Recent logs
+Your job: look at the recent errors and take whatever action is needed.
 
-${logSummary}
+## What you can do
+
+**GitHub actions on \`${basename(targetCwd)}\` (run gh commands with \`--cwd ${targetCwd}\` or \`cd ${targetCwd} &&\`):**
+- Update labels: \`gh issue edit #N --add-label X --remove-label Y\`
+- Comment: \`gh issue comment #N --body "..."\` or \`gh pr comment #N --body "..."\`
+- Check current state: \`gh issue list\`, \`gh pr list\`
+${selfImproveSection}
+## Recent errors (${errors.length} new since last check)
+
+${errorSection || "No errors — nothing to do."}
 
 ---
 
-When done, output exactly:
-FLOGVIT-CODER:DONE:<one-line summary of what was fixed>
+When done: FLOGVIT-CODER:DONE:<one line summary or "nothing to do">
+If stuck: FLOGVIT-CODER:STUCK:<reason>`;
 
-If you cannot identify a clear fix, output:
-FLOGVIT-CODER:STUCK:<reason>
-`;
+  const toolName = resolveToolForCommand(config, "fix-issue");
+  const tool = getTool(toolName);
+  const toolConfig = config.tools[toolName] ?? {};
+
+  const result = await tool.run({
+    prompt,
+    cwd: sourceRoot ?? targetCwd,
+    jobName: "supervisor",
+    fallbackApiKey: config.defaults.fallback_api_key,
+    maxTurns: 15, // supervisor should be decisive, not exhaustive
+    model: "claude-haiku-4-5", // start cheap — supervisor tasks are usually simple
+  });
+
+  // If self-improve and source changed — verify and commit
+  if (selfImprove && sourceRoot) {
+    const changed = await $`git status --porcelain`.cwd(sourceRoot).nothrow().text();
+    if (changed.trim()) {
+      const tsc = await $`bun tsc --noEmit`.cwd(sourceRoot).nothrow();
+      if (tsc.exitCode !== 0) {
+        console.error("[supervisor] TypeScript errors — reverting");
+        await $`git checkout -- .`.cwd(sourceRoot).nothrow();
+      } else {
+        await $`git add -u`.cwd(sourceRoot).nothrow();
+        await $`git commit -m ${"supervisor: auto-fix from log analysis"}`.cwd(sourceRoot).nothrow();
+      }
+    }
+  }
+
+  const lastLine = result.output.trim().split("\n").pop() ?? "";
+  const summary = lastLine.replace(/^FLOGVIT-CODER:DONE:/, "").replace(/^FLOGVIT-CODER:STUCK:/, "STUCK: ");
+  return { success: result.success, summary };
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// CLI entry point (manual use: flogvit-pilot develop)
 // ---------------------------------------------------------------------------
 
 export async function run(args: string[], config: Config, cwd: string): Promise<void> {
-  const autoMode = args.includes("--auto");
   const hoursArg = args.find((a) => a.startsWith("--hours="));
   const hours = hoursArg ? parseInt(hoursArg.split("=")[1], 10) : 24;
+  const selfImprove = args.includes("--self-improve");
 
-  // 1. Find own source root
   const sourceRoot = await findSourceRoot();
   if (!sourceRoot) {
-    console.error(
-      "Cannot find flogvit-pilot source root.\n" +
-      "This command only works when installed via `bun link` from the source directory.\n" +
-      "It will not work with brew, bunx, or global npm installs."
-    );
+    console.error("Cannot find flogvit-pilot source root. Requires bun link install.");
     process.exit(1);
   }
-  console.log(`Source root: ${sourceRoot}`);
 
-  // 2. Scan logs
-  console.log(`Scanning logs from the last ${hours} hours...`);
-  const logEntries = await scanLogs(hours);
-  const errorCount = logEntries.filter((e) => e.hasError).length;
-  console.log(`Found ${logEntries.length} log files (${errorCount} with errors/failures)`);
+  const since = Date.now() - hours * 60 * 60 * 1000;
+  const errors = await scanNewErrorLogs(since);
+  console.log(`Found ${errors.length} error logs in the last ${hours}h`);
 
-  if (logEntries.length === 0) {
-    console.log("No recent logs found. Nothing to analyze.");
+  if (errors.length === 0) {
+    console.log("Nothing to do.");
     return;
   }
 
-  const logSummary = buildLogSummary(logEntries);
-  const prompt = buildPrompt(sourceRoot, logSummary);
-
-  const gitStatus = await $`git status --porcelain`.cwd(sourceRoot).nothrow().text();
-  if (gitStatus.trim()) {
-    console.warn("Warning: source repo has uncommitted changes — develop will work on top of them.");
-  }
-
-  // 4. Write TASK.md
-  const taskFile = resolve(sourceRoot, "TASK.md");
-  await writeFile(taskFile, prompt);
-
-  // 5. Run Claude
-  if (autoMode) {
-    console.log("Running in autonomous mode...\n");
-
-    const toolName = resolveToolForCommand(config, "fix-issue");
-    const tool = getTool(toolName);
-    const toolConfig = config.tools[toolName] ?? {};
-
-    const result = await tool.run({
-      prompt,
-      cwd: sourceRoot,
-      jobName: "develop",
-      fallbackApiKey: config.defaults.fallback_api_key,
-      maxTurns: (toolConfig["max-turns"] as number) ?? 30,
-    });
-
-    await unlink(taskFile).catch(() => {});
-
-    if (!result.success) {
-      console.error("develop: agent did not complete successfully — no changes applied");
-      return;
-    }
-  } else {
-    console.log("Starting Claude Code... (close the session when done)\n");
-
-    const proc = Bun.spawn(
-      ["claude", "Read TASK.md for context about bugs to fix in this codebase."],
-      { cwd: sourceRoot, stdin: "inherit", stdout: "inherit", stderr: "inherit" }
-    );
-
-    await proc.exited;
-    await unlink(taskFile).catch(() => {});
-  }
-
-  // 6. Type-check — hard gate before touching anything
-  console.log("develop: checking TypeScript...");
-  const tscResult = await $`bun tsc --noEmit`.cwd(sourceRoot).nothrow();
-  if (tscResult.exitCode !== 0) {
-    console.error("develop: TypeScript errors — changes discarded\n" + tscResult.stderr.slice(0, 800));
-    await $`git checkout -- .`.cwd(sourceRoot).nothrow();
-    return;
-  }
-
-  // 7. Check for changes
-  const changed = await $`git status --porcelain`.cwd(sourceRoot).nothrow().text();
-  if (!changed.trim()) {
-    console.log("develop: no changes made");
-    return;
-  }
-
-  // 8. Commit
-  //    --auto: commit directly on current branch — active immediately (bun link)
-  //    interactive: create a branch so changes can be reviewed/discarded
-  if (autoMode) {
-    await $`git add -A`.cwd(sourceRoot);
-    await $`git commit -m ${"develop: auto-fix from log analysis"}`.cwd(sourceRoot);
-    console.log("develop: fix committed — active immediately");
-  } else {
-    const branchSuffix = new Date().toISOString().slice(0, 16).replace(/[T:]/g, "-");
-    const branch = `develop/fix-${branchSuffix}`;
-    await $`git checkout -b ${branch}`.cwd(sourceRoot).nothrow();
-    await $`git add -A`.cwd(sourceRoot);
-    await $`git commit -m ${"develop: fix from log analysis"}`.cwd(sourceRoot);
-
-    // Merge back to main and return to it
-    await $`git checkout main`.cwd(sourceRoot).nothrow();
-    const mergeResult = await $`git merge --no-ff ${branch} -m ${"develop: merge fix from log analysis"}`.cwd(sourceRoot).nothrow();
-    if (mergeResult.exitCode !== 0) {
-      console.error("develop: merge failed — changes are on branch", branch);
-      return;
-    }
-    await $`git branch -d ${branch}`.cwd(sourceRoot).nothrow();
-    console.log(`\n✅ Fix merged to main — active immediately`);
-  }
+  const { summary } = await runSupervisor({
+    targetCwd: cwd,
+    errors,
+    config,
+    selfImprove,
+    sourceRoot,
+  });
+  console.log(`Supervisor: ${summary}`);
 }
