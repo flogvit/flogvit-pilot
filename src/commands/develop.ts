@@ -177,23 +177,26 @@ If stuck: FLOGVIT-CODER:STUCK:<reason>`;
   }
 
   // If self-improve and source changed — verify and commit
+  let selfImproveSuffix = "";
   if (selfImprove && sourceRoot) {
     const changed = await $`git status --porcelain`.cwd(sourceRoot).nothrow().text();
     if (changed.trim()) {
       const tsc = await $`bun tsc --noEmit`.cwd(sourceRoot).nothrow();
       if (tsc.exitCode !== 0) {
-        console.error("[supervisor] TypeScript errors — reverting");
         await $`git checkout -- .`.cwd(sourceRoot).nothrow();
+        selfImproveSuffix = " [self-improve: reverted — tsc errors]";
       } else {
         await $`git add -u`.cwd(sourceRoot).nothrow();
+        const files = changed.trim().split("\n").map((l) => l.trim().split(" ").pop()).join(", ");
         await $`git commit -m ${"supervisor: auto-fix from log analysis"}`.cwd(sourceRoot).nothrow();
+        selfImproveSuffix = ` [self-improve: committed ${files}]`;
       }
     }
   }
 
   const lastLine = result.output.trim().split("\n").pop() ?? "";
   const summary = lastLine.replace(/^FLOGVIT-CODER:DONE:/, "").replace(/^FLOGVIT-CODER:STUCK:/, "STUCK: ");
-  return { success: result.success, summary };
+  return { success: result.success, summary: summary + selfImproveSuffix };
 }
 
 // ---------------------------------------------------------------------------

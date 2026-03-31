@@ -30,6 +30,7 @@ flogvit-pilot <command> [options]
 | `init` | Set up flogvit-pilot in current repo |
 | `watch` | Autonomous dispatch loop — picks up labeled issues and PRs |
 | `triage <#>` | Evaluate an issue and assign action label |
+| `split-issue <#>` | Split a broad issue into focused sub-issues, or route to plan/autofix (opus) |
 | `plan-issue <#>` | Generate an implementation plan for a complex issue |
 | `fix-issue <#>` | Fix a GitHub issue and create PR (unattended) |
 | `fix-issues` | Fix all issues labeled `autofix` |
@@ -112,8 +113,11 @@ flogvit-pilot tail 18   # Stream output of the job working on issue #18
 `watch` drives issues and PRs through a pipeline via GitHub labels:
 
 ```
-Issues:   needs-triage → autofix / needs-plan → [fix-issue] → PR created
-                                                               ↓
+Issues:   needs-triage → autofix → [fix-issue] → PR created
+                       → needs-split → [split-issue] → sub-issues (autofix) or needs-plan
+                                                                    ↓
+                                       needs-plan → [plan-issue] → sub-issues (autofix)
+                                                                    ↓
 PRs:      needs-verify → needs-review → needs-audit → approved → merged
 ```
 
@@ -122,7 +126,8 @@ Labels used (all prefixed `flogvit-pilot:`):
 | Label | Meaning |
 |-------|---------|
 | `needs-triage` | New issue, awaiting evaluation |
-| `needs-plan` | Issue needs an implementation plan before fixing |
+| `needs-split` | Issue may be too broad — split-issue will decide |
+| `needs-plan` | Too complex to split simply — needs a full implementation plan |
 | `autofix` | Ready to be fixed automatically |
 | `in-progress` | Job currently running |
 | `waiting` | Blocked — waiting for human input |

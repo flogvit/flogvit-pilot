@@ -15,6 +15,7 @@ export const LABELS = {
   changesRequested: "flogvit-pilot:changes-requested",
   needsTriage: "flogvit-pilot:needs-triage",
   needsPlan: "flogvit-pilot:needs-plan",
+  needsSplit: "flogvit-pilot:needs-split",
   blocked: "flogvit-pilot:blocked",
   ignore: "flogvit-pilot:ignore",
 } as const;
@@ -34,6 +35,7 @@ const LABEL_DEFINITIONS = [
   { name: LABELS.changesRequested, description: "flogvit-pilot: review requested changes", color: "fbca04" },
   { name: LABELS.needsTriage, description: "flogvit-pilot: needs triage evaluation", color: "bfd4f2" },
   { name: LABELS.needsPlan, description: "flogvit-pilot: needs implementation plan", color: "d4c5f9" },
+  { name: LABELS.needsSplit, description: "flogvit-pilot: issue too broad, needs splitting", color: "f9d0c4" },
   { name: LABELS.blocked, description: "flogvit-pilot: blocked by another issue", color: "e4e669" },
   { name: LABELS.ignore, description: "flogvit-pilot: ignore this issue/PR entirely", color: "eeeeee" },
 ];

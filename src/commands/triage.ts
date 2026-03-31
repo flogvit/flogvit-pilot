@@ -24,7 +24,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export type TriageVerdict =
   | { verdict: "autofix" }
-  | { verdict: "needs-plan" }
+  | { verdict: "needs-split" }
   | { verdict: "waiting"; reason: string }
   | { verdict: "close"; reason: string }
   | { verdict: "unknown" };
@@ -34,7 +34,8 @@ export function parseTriageOutput(output: string): TriageVerdict {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim().replace(/^`+|`+$/g, "");
     if (line === "FLOGVIT-CODER:TRIAGE:AUTOFIX") return { verdict: "autofix" };
-    if (line === "FLOGVIT-CODER:TRIAGE:NEEDS-PLAN") return { verdict: "needs-plan" };
+    if (line === "FLOGVIT-CODER:TRIAGE:NEEDS-SPLIT") return { verdict: "needs-split" };
+    if (line === "FLOGVIT-CODER:TRIAGE:NEEDS-PLAN") return { verdict: "needs-split" }; // legacy → route through split-issue
     if (line.startsWith("FLOGVIT-CODER:TRIAGE:WAITING:")) {
       return { verdict: "waiting", reason: line.replace("FLOGVIT-CODER:TRIAGE:WAITING:", "").trim() };
     }
@@ -50,7 +51,7 @@ export async function triageIssue(
   config: Config,
   cwd: string,
   failureContext?: string
-): Promise<{ verdict: "autofix" | "needs-plan" | "waiting" | "close" }> {
+): Promise<{ verdict: "autofix" | "needs-split" | "waiting" | "close" }> {
   const homeDir = process.env.HOME ?? homedir();
   const stateDir = resolve(homeDir, ".flogvit-pilot", "state");
   const logDir = resolve(homeDir, ".flogvit-pilot", "logs");
@@ -145,9 +146,9 @@ export async function triageIssue(
     return { verdict: "autofix" };
   }
 
-  if (parsed.verdict === "needs-plan") {
-    await addLabel(issueNum, LABELS.needsPlan, cwd);
-    return { verdict: "needs-plan" };
+  if (parsed.verdict === "needs-split") {
+    await addLabel(issueNum, LABELS.needsSplit, cwd);
+    return { verdict: "needs-split" };
   }
 
   if (parsed.verdict === "close") {

@@ -9,11 +9,18 @@ FLOGVIT-CODER:TRIAGE:AUTOFIX`;
     expect(result.verdict).toBe("autofix");
   });
 
-  test("detects NEEDS-PLAN verdict", () => {
+  test("detects NEEDS-SPLIT verdict", () => {
+    const output = `This issue bundles multiple concerns and should be split.
+FLOGVIT-CODER:TRIAGE:NEEDS-SPLIT`;
+    const result = parseTriageOutput(output);
+    expect(result.verdict).toBe("needs-split");
+  });
+
+  test("maps legacy NEEDS-PLAN to needs-split", () => {
     const output = `This issue is vague and needs a plan before we can proceed.
 FLOGVIT-CODER:TRIAGE:NEEDS-PLAN`;
     const result = parseTriageOutput(output);
-    expect(result.verdict).toBe("needs-plan");
+    expect(result.verdict).toBe("needs-split");
   });
 
   test("detects WAITING verdict with reason", () => {

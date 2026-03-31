@@ -14,6 +14,7 @@ import { verifyPR } from "./verify";
 import { reviewPR } from "./review-pr";
 import { auditPR } from "./audit-pr";
 import { run as mergeRun } from "./merge";
+import { splitIssue } from "./split-issue";
 import { worktreesBaseDir } from "../lib/worktree";
 import { PIPELINE_STAGES, STAGE_LABELS } from "../lib/pipeline";
 import { findAnsweredIssues } from "./watch-helpers";
@@ -331,9 +332,9 @@ async function watchLive(config: Config, cwd: string, opts: {
     log("startup", "warning: --self-improve requires bun link install of flogvit-pilot");
   }
 
-  // Initialize supervisor status for UI
+  // Initialize supervisor status for UI — self-improve only active if source root was found
   supervisorStatus.enabled = supervisor || selfImprove;
-  supervisorStatus.selfImprove = selfImprove;
+  supervisorStatus.selfImprove = selfImprove && !!sourceRoot;
   supervisorStatus.running = false;
   supervisorStatus.lastScanAt = null;
   supervisorStatus.lastSummary = null;
@@ -498,6 +499,32 @@ async function watchLive(config: Config, cwd: string, opts: {
         }).catch((err) => onJobError(jobName, err));
       }
 
+      // SPLIT — runs before plan; split-issue decides whether to split, pass through, or escalate to plan
+      for (const issue of sortByPriority(byLabel(LABELS.needsSplit))) {
+        if (activeJobs.size >= maxJobs) break;
+        if (inProgressNums.has(issue.number)) continue;
+        const blockedBy = checkDeps(issue.body, openIssueNums);
+        if (blockedBy.length > 0) {
+          if (!issue.labels.includes(LABELS.blocked)) {
+            await addLabel(issue.number, LABELS.blocked, cwd);
+            log(`issue-${issue.number}`, `blocked by #${blockedBy.join(", #")}`);
+          }
+          continue;
+        }
+        if (issue.labels.includes(LABELS.blocked)) {
+          await removeLabel(issue.number, LABELS.blocked, cwd);
+          log(`issue-${issue.number}`, `unblocked`);
+        }
+        const jobName = `split-${issue.number}`;
+        if (activeJobs.has(jobName)) continue;
+        activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "split", model: jobModel(config, "split-issue") });
+        log(jobName, `splitting issue #${issue.number}`);
+        splitIssue(issue.number, config, cwd).then(() => {
+          activeJobs.delete(jobName);
+          log(jobName, `done`);
+        }).catch((err) => onJobError(jobName, err));
+      }
+
       // PLAN + FIX — sorted by issue priority (bug > enhancement, high > medium > low)
       for (const issue of sortByPriority(byLabel(LABELS.needsPlan))) {
         if (activeJobs.size >= maxJobs) break;
@@ -581,6 +608,11 @@ async function watchLive(config: Config, cwd: string, opts: {
           pendingQueue.push({ stage: "fix-pr", title: pr.title, number: pr.number, kind: "pr" });
         }
       }
+      for (const issue of sortByPriority(byLabel(LABELS.needsSplit))) {
+        if (!inProgressNums.has(issue.number) && !issue.labels.includes(LABELS.blocked) && !activeJobs.has(`split-${issue.number}`)) {
+          pendingQueue.push({ stage: "split", title: issue.title, number: issue.number, kind: "issue" });
+        }
+      }
       for (const issue of sortByPriority(byLabel(LABELS.needsPlan))) {
         if (!inProgressNums.has(issue.number) && !issue.labels.includes(LABELS.blocked) && !activeJobs.has(`plan-${issue.number}`)) {
           pendingQueue.push({ stage: "plan", title: issue.title, number: issue.number, kind: "issue" });
@@ -608,7 +640,8 @@ async function watchLive(config: Config, cwd: string, opts: {
         const errors = await scanNewErrorLogs(since, logOffsets).catch(() => []);
         if (errors.length > 0) {
           supervisorStatus.running = true;
-          activeJobs.set("supervisor", { label: `${errors.length} error(s) in logs`, startedAt: Date.now(), stage: "supervisor", model: "haiku" });
+          const supervisorLabel = selfImprove ? `${errors.length} error(s) — self-improve on` : `${errors.length} error(s) in logs`;
+          activeJobs.set("supervisor", { label: supervisorLabel, startedAt: Date.now(), stage: "supervisor", model: "haiku" });
           log("supervisor", `found ${errors.length} new error log(s)`);
           runSupervisor({ targetCwd: cwd, errors, config, selfImprove, sourceRoot }).then(({ summary }) => {
             activeJobs.delete("supervisor");
