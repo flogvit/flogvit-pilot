@@ -1,9 +1,9 @@
 import { $ } from "bun";
 import { join } from "path";
-import { mkdir, rm } from "fs/promises";
+import { mkdir, rm, writeFile, access } from "fs/promises";
 
 export function worktreesBaseDir(homeDir: string, repoName: string): string {
-  return join(homeDir, ".flogvit-coder", "worktrees", repoName);
+  return join(homeDir, ".flogvit-pilot", "worktrees", repoName);
 }
 
 export function worktreePath(homeDir: string, repoName: string, jobName: string): string {
@@ -21,6 +21,21 @@ export async function createWorktree(path: string, branch: string, cwd: string):
     await $`git worktree add ${path} ${branch}`.cwd(cwd);
   } else {
     await $`git worktree add ${path} -b ${branch}`.cwd(cwd);
+  }
+
+  // If this is a Rust project, point cargo to a shared target dir to avoid
+  // rebuilding all dependencies (3-5 GB) in every worktree
+  const isRust = await access(join(cwd, "Cargo.toml")).then(() => true).catch(() => false);
+  if (isRust) {
+    const sharedTarget = join(cwd, "target");
+    const cargoConfigDir = join(path, ".cargo");
+    await mkdir(cargoConfigDir, { recursive: true });
+    await writeFile(
+      join(cargoConfigDir, "config.toml"),
+      `[build]\ntarget-dir = ${JSON.stringify(sharedTarget)}\n`
+    );
+    // Prevent this machine-specific file from being committed
+    await writeFile(join(cargoConfigDir, ".gitignore"), "config.toml\n");
   }
 }
 
