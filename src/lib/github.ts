@@ -4,45 +4,45 @@ export const LABELS = {
   autofix: "autofix",
   autoImplement: "auto-implement",
   autoReview: "auto-review",
-  waiting: "flogvit-coder:waiting",
-  inProgress: "flogvit-coder:in-progress",
-  failed: "flogvit-coder:failed",
-  needsVerify: "flogvit-coder:needs-verify",
-  needsReview: "flogvit-coder:needs-review",
-  needsAudit: "flogvit-coder:needs-audit",
-  approved: "flogvit-coder:approved",
-  securityIssue: "flogvit-coder:security-issue",
-  changesRequested: "flogvit-coder:changes-requested",
-  needsTriage: "flogvit-coder:needs-triage",
-  needsPlan: "flogvit-coder:needs-plan",
-  blocked: "flogvit-coder:blocked",
-  ignore: "flogvit-coder:ignore",
+  waiting: "flogvit-pilot:waiting",
+  inProgress: "flogvit-pilot:in-progress",
+  failed: "flogvit-pilot:failed",
+  needsVerify: "flogvit-pilot:needs-verify",
+  needsReview: "flogvit-pilot:needs-review",
+  needsAudit: "flogvit-pilot:needs-audit",
+  approved: "flogvit-pilot:approved",
+  securityIssue: "flogvit-pilot:security-issue",
+  changesRequested: "flogvit-pilot:changes-requested",
+  needsTriage: "flogvit-pilot:needs-triage",
+  needsPlan: "flogvit-pilot:needs-plan",
+  blocked: "flogvit-pilot:blocked",
+  ignore: "flogvit-pilot:ignore",
 } as const;
 
 const LABEL_DEFINITIONS = [
-  { name: LABELS.autofix, description: "flogvit-coder: auto-fix this issue", color: "0e8a16" },
-  { name: LABELS.autoImplement, description: "flogvit-coder: auto-implement this feature", color: "1d76db" },
-  { name: LABELS.autoReview, description: "flogvit-coder: auto-review this PR", color: "5319e7" },
-  { name: LABELS.waiting, description: "flogvit-coder: waiting for human input", color: "fbca04" },
-  { name: LABELS.inProgress, description: "flogvit-coder: currently working", color: "0075ca" },
-  { name: LABELS.failed, description: "flogvit-coder: failed, needs manual help", color: "d73a4a" },
-  { name: LABELS.needsVerify, description: "flogvit-coder: run verification (tests)", color: "e4e669" },
-  { name: LABELS.needsReview, description: "flogvit-coder: run AI code review", color: "0075ca" },
-  { name: LABELS.needsAudit, description: "flogvit-coder: run security audit", color: "5319e7" },
-  { name: LABELS.approved, description: "flogvit-coder: approved for merge", color: "0e8a16" },
-  { name: LABELS.securityIssue, description: "flogvit-coder: security issue found", color: "d73a4a" },
-  { name: LABELS.changesRequested, description: "flogvit-coder: review requested changes", color: "fbca04" },
-  { name: LABELS.needsTriage, description: "flogvit-coder: needs triage evaluation", color: "bfd4f2" },
-  { name: LABELS.needsPlan, description: "flogvit-coder: needs implementation plan", color: "d4c5f9" },
-  { name: LABELS.blocked, description: "flogvit-coder: blocked by another issue", color: "e4e669" },
-  { name: LABELS.ignore, description: "flogvit-coder: ignore this issue/PR entirely", color: "eeeeee" },
+  { name: LABELS.autofix, description: "flogvit-pilot: auto-fix this issue", color: "0e8a16" },
+  { name: LABELS.autoImplement, description: "flogvit-pilot: auto-implement this feature", color: "1d76db" },
+  { name: LABELS.autoReview, description: "flogvit-pilot: auto-review this PR", color: "5319e7" },
+  { name: LABELS.waiting, description: "flogvit-pilot: waiting for human input", color: "fbca04" },
+  { name: LABELS.inProgress, description: "flogvit-pilot: currently working", color: "0075ca" },
+  { name: LABELS.failed, description: "flogvit-pilot: failed, needs manual help", color: "d73a4a" },
+  { name: LABELS.needsVerify, description: "flogvit-pilot: run verification (tests)", color: "e4e669" },
+  { name: LABELS.needsReview, description: "flogvit-pilot: run AI code review", color: "0075ca" },
+  { name: LABELS.needsAudit, description: "flogvit-pilot: run security audit", color: "5319e7" },
+  { name: LABELS.approved, description: "flogvit-pilot: approved for merge", color: "0e8a16" },
+  { name: LABELS.securityIssue, description: "flogvit-pilot: security issue found", color: "d73a4a" },
+  { name: LABELS.changesRequested, description: "flogvit-pilot: review requested changes", color: "fbca04" },
+  { name: LABELS.needsTriage, description: "flogvit-pilot: needs triage evaluation", color: "bfd4f2" },
+  { name: LABELS.needsPlan, description: "flogvit-pilot: needs implementation plan", color: "d4c5f9" },
+  { name: LABELS.blocked, description: "flogvit-pilot: blocked by another issue", color: "e4e669" },
+  { name: LABELS.ignore, description: "flogvit-pilot: ignore this issue/PR entirely", color: "eeeeee" },
 ];
 
 export function formatIssueComment(
   status: string,
   message: string
 ): string {
-  return `🤖 **flogvit-coder** — ${status}\n\n${message}`;
+  return `🤖 **flogvit-pilot** — ${status}\n\n${message}`;
 }
 
 export function parseBranchName(
@@ -50,14 +50,14 @@ export function parseBranchName(
   identifier: number | string
 ): string {
   if (typeof identifier === "number") {
-    return `flogvit-coder/${type}-${identifier}`;
+    return `flogvit-pilot/${type}-${identifier}`;
   }
   const sanitized = identifier
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, " ")
     .trim()
     .replace(/[\s-]+/g, "-");
-  return `flogvit-coder/${type}-${sanitized}`;
+  return `flogvit-pilot/${type}-${sanitized}`;
 }
 
 export interface Issue {
@@ -190,7 +190,7 @@ export async function getPR(prNumber: number, cwd: string): Promise<PR> {
 }
 
 export async function addPRLabel(prNumber: number, label: string, cwd: string): Promise<void> {
-  await $`gh pr edit ${prNumber} --add-label ${label}`.cwd(cwd);
+  await $`gh pr edit ${prNumber} --add-label ${label}`.cwd(cwd).nothrow();
 }
 
 export async function removePRLabel(prNumber: number, label: string, cwd: string): Promise<void> {
@@ -203,6 +203,21 @@ export async function commentOnPR(prNumber: number, body: string, cwd: string): 
 
 export async function getPRDiff(prNumber: number, cwd: string): Promise<string> {
   return await $`gh pr diff ${prNumber}`.cwd(cwd).text();
+}
+
+export async function findPRByBranch(branch: string, cwd: string): Promise<PR | null> {
+  const result = await $`gh pr list --head ${branch} --state open --json number,title,headRefName,labels,body`.cwd(cwd).nothrow().text();
+  if (!result.trim()) return null;
+  const data = JSON.parse(result);
+  if (!Array.isArray(data) || data.length === 0) return null;
+  const pr = data[0];
+  return {
+    number: pr.number,
+    title: pr.title,
+    headBranch: pr.headRefName,
+    labels: pr.labels?.map((l: { name: string }) => l.name) ?? [],
+    body: pr.body ?? "",
+  };
 }
 
 export function extractPRNumber(prUrl: string): number {
@@ -228,11 +243,13 @@ export async function createIssue(
 }
 
 export async function createPullRequest(
-  opts: { title: string; body: string; base?: string },
+  opts: { title: string; body: string; base?: string; head?: string },
   cwd: string
 ): Promise<string> {
   const base = opts.base ?? "main";
-  const result = await $`gh pr create --title ${opts.title} --body ${opts.body} --base ${base}`.cwd(cwd).text();
+  const args = ["gh", "pr", "create", "--title", opts.title, "--body", opts.body, "--base", base];
+  if (opts.head) args.push("--head", opts.head);
+  const result = await $`${args}`.cwd(cwd).text();
   return result.trim();
 }
 
