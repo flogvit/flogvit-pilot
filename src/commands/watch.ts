@@ -18,7 +18,7 @@ import { splitIssue } from "./split-issue";
 import { worktreesBaseDir } from "../lib/worktree";
 import { PIPELINE_STAGES, STAGE_LABELS } from "../lib/pipeline";
 import { findAnsweredIssues } from "./watch-helpers";
-import { scanNewErrorLogs, runSupervisor, findSourceRoot } from "./develop";
+import { scanNewErrorLogs, initLogOffsets, runSupervisor, findSourceRoot } from "./develop";
 
 export { findAnsweredIssues } from "./watch-helpers";
 
@@ -319,8 +319,7 @@ async function watchLive(config: Config, cwd: string, opts: {
 
   let queue: { stage: string; title: string; number: number; kind: "issue" | "pr" }[] = [];
   let running = true;
-  // Look back 1 hour on first scan to catch errors that predate this watch session
-  let lastLogScanTime = Date.now() - 60 * 60 * 1000;
+  let lastLogScanTime = Date.now();
   let lastSupervisorCompletedAt = 0;
   const SUPERVISOR_COOLDOWN_MS = 5 * 60 * 1000; // don't re-run within 5 minutes of last completion
   // Track read offsets per log file so we only send new content to the supervisor
@@ -638,7 +637,9 @@ async function watchLive(config: Config, cwd: string, opts: {
       if (cooldownRemaining <= 0) {
         // logOffsets is updated in place by scanNewErrorLogs — offsets advance even for non-error content
         const errors = await scanNewErrorLogs(since, logOffsets).catch(() => []);
-        if (errors.length > 0) {
+        if (errors.length === 0) {
+          supervisorStatus.lastSummary = null;
+        } else {
           supervisorStatus.running = true;
           const supervisorLabel = selfImprove ? `${errors.length} error(s) — self-improve on` : `${errors.length} error(s) in logs`;
           activeJobs.set("supervisor", { label: supervisorLabel, startedAt: Date.now(), stage: "supervisor", model: "haiku" });
@@ -660,6 +661,12 @@ async function watchLive(config: Config, cwd: string, opts: {
       }
     }
   };
+
+  // On startup, seed log offsets to current EOF so the first scan only sees new content
+  if (supervisor || selfImprove) {
+    await initLogOffsets(logOffsets);
+    log("startup", "log offsets initialised");
+  }
 
   // On startup, remove orphaned in-progress labels (no active jobs in this session)
   const startupIssues = await listOpenIssues(cwd);

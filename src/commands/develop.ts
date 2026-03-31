@@ -45,6 +45,28 @@ export interface LogError {
 }
 
 /**
+ * Pre-seed logOffsets with the current end-of-file positions for all existing log files.
+ * Call this on startup so the first scan only picks up content written after the watch begins.
+ */
+export async function initLogOffsets(offsets: Map<string, number>): Promise<void> {
+  const homeDir = process.env.HOME ?? homedir();
+  const logBase = resolve(homeDir, ".flogvit-pilot", "logs");
+
+  const repos = await readdir(logBase).catch(() => [] as string[]);
+  for (const repo of repos) {
+    if (repo === "active") continue;
+    const repoDir = resolve(logBase, repo);
+    const files = await readdir(repoDir).catch(() => [] as string[]);
+    for (const file of files) {
+      if (!file.endsWith(".log") || file.endsWith("-agent.log")) continue;
+      const filePath = resolve(repoDir, file);
+      const content = await readFile(filePath, "utf-8").catch(() => "");
+      offsets.set(filePath, content.length);
+    }
+  }
+}
+
+/**
  * Scan for error logs, returning only content that is new since last call.
  *
  * @param since  - mtime threshold for files not yet in seenOffsets (first-time discovery)
