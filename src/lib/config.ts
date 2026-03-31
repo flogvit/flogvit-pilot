@@ -17,13 +17,14 @@ export interface Config {
   defaults: {
     tool: string;
     fallback_api_key?: string;
+    max_concurrent_jobs?: number;
   };
   tools: Record<string, ToolConfig>;
   commands: Record<string, CommandConfig>;
 }
 
 const BUILTIN_DEFAULTS: Config = {
-  defaults: { tool: "claude" },
+  defaults: { tool: "claude", max_concurrent_jobs: 3 },
   tools: {
     claude: {
       "max-turns": 50,

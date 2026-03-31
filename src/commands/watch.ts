@@ -1,7 +1,7 @@
 import { resolve, basename } from "path";
 import { homedir } from "os";
 import type { Config } from "../lib/config";
-import { listOpenIssues, listOpenPRs, getIssue, removeLabel, addLabel, addPRLabel, removePRLabel, LABELS } from "../lib/github";
+import { listOpenIssues, listOpenPRs, getIssue, removeLabel, addLabel, addPRLabel, removePRLabel, parseDependsOn, LABELS } from "../lib/github";
 import { loadState, saveState } from "../lib/state";
 import { triageIssue } from "./triage";
 import { planIssue } from "./plan-issue";
@@ -16,6 +16,28 @@ import { findAnsweredIssues } from "./watch-helpers";
 
 export { findAnsweredIssues } from "./watch-helpers";
 
+function checkDeps(body: string, openNums: Set<number>): number[] {
+  return parseDependsOn(body).filter((n) => openNums.has(n));
+}
+
+/**
+ * Priority score for issue-based jobs — lower = higher priority.
+ * Triage is exempt from the concurrency cap and is not scored here.
+ */
+function issuePriority(labels: string[]): number {
+  let score = 100;
+  if (labels.includes("priority:high")) score -= 30;
+  else if (labels.includes("priority:medium")) score -= 20;
+  else if (labels.includes("priority:low")) score -= 10;
+  if (labels.includes("bug")) score -= 20;
+  else if (labels.includes("enhancement")) score -= 10;
+  return score;
+}
+
+function sortByPriority<T extends { labels: string[] }>(items: T[]): T[] {
+  return [...items].sort((a, b) => issuePriority(a.labels) - issuePriority(b.labels));
+}
+
 async function watchCron(config: Config, cwd: string): Promise<void> {
   const repoName = basename(cwd);
   const homeDir = process.env.HOME ?? homedir();
@@ -28,6 +50,7 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
   const byLabel = (label: string) => allOpenIssues.filter((i) => i.labels.includes(label));
   const prsByLabel = (label: string) => allOpenPRs.filter((pr) => pr.labels.includes(label));
   const inProgressNums = new Set(byLabel(LABELS.inProgress).map((i) => i.number));
+  const openIssueNums = new Set(allOpenIssues.map((i) => i.number));
 
   // 1. Detect unlabeled issues → set needs-triage
   for (const issue of allOpenIssues) {
@@ -48,6 +71,18 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
   // 3. Dispatch triage for needs-triage issues
   for (const issue of byLabel(LABELS.needsTriage)) {
     if (inProgressNums.has(issue.number)) continue;
+    const blockedBy = checkDeps(issue.body, openIssueNums);
+    if (blockedBy.length > 0) {
+      if (!issue.labels.includes(LABELS.blocked)) {
+        await addLabel(issue.number, LABELS.blocked, cwd);
+        console.log(`Issue #${issue.number} blocked by #${blockedBy.join(", #")}`);
+      }
+      continue;
+    }
+    if (issue.labels.includes(LABELS.blocked)) {
+      await removeLabel(issue.number, LABELS.blocked, cwd);
+      console.log(`Issue #${issue.number} unblocked`);
+    }
     console.log(`Triaging issue #${issue.number}: ${issue.title}`);
     await triageIssue(issue.number, config, cwd);
   }
@@ -55,6 +90,17 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
   // 4. Dispatch plan-issue for needs-plan issues
   for (const issue of byLabel(LABELS.needsPlan)) {
     if (inProgressNums.has(issue.number)) continue;
+    const blockedBy = checkDeps(issue.body, openIssueNums);
+    if (blockedBy.length > 0) {
+      if (!issue.labels.includes(LABELS.blocked)) {
+        await addLabel(issue.number, LABELS.blocked, cwd);
+        console.log(`Issue #${issue.number} blocked by #${blockedBy.join(", #")}`);
+      }
+      continue;
+    }
+    if (issue.labels.includes(LABELS.blocked)) {
+      await removeLabel(issue.number, LABELS.blocked, cwd);
+    }
     console.log(`Planning issue #${issue.number}: ${issue.title}`);
     await planIssue(issue.number, config, cwd);
   }
@@ -62,6 +108,17 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
   // 5. Dispatch fix for autofix issues (and retry stuck ones)
   for (const issue of byLabel(LABELS.autofix)) {
     if (inProgressNums.has(issue.number)) continue;
+    const blockedBy = checkDeps(issue.body, openIssueNums);
+    if (blockedBy.length > 0) {
+      if (!issue.labels.includes(LABELS.blocked)) {
+        await addLabel(issue.number, LABELS.blocked, cwd);
+        console.log(`Issue #${issue.number} blocked by #${blockedBy.join(", #")}`);
+      }
+      continue;
+    }
+    if (issue.labels.includes(LABELS.blocked)) {
+      await removeLabel(issue.number, LABELS.blocked, cwd);
+    }
     const existingState = await loadState(stateDir, repoName, issue.number);
 
     let retryModel: string | undefined;
@@ -223,6 +280,7 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
       const byLabel = (label: string) => allOpenIssues.filter((i) => i.labels.includes(label));
       const prsByLabel = (label: string) => allOpenPRs.filter((pr) => pr.labels.includes(label));
       const inProgressNums = new Set(byLabel(LABELS.inProgress).map((i) => i.number));
+      const openIssueNums = new Set(allOpenIssues.map((i) => i.number));
 
       // Detect unlabeled issues → set needs-triage
       for (const issue of allOpenIssues) {
@@ -240,9 +298,23 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         log(`pr-${pr.number}`, `unlabeled PR → needs-verify`);
       }
 
-      // Dispatch triage for needs-triage issues
+      const maxJobs = config.defaults.max_concurrent_jobs ?? 3;
+
+      // TRIAGE — exempt from cap: determines priority of everything else
       for (const issue of byLabel(LABELS.needsTriage)) {
         if (inProgressNums.has(issue.number)) continue;
+        const blockedBy = checkDeps(issue.body, openIssueNums);
+        if (blockedBy.length > 0) {
+          if (!issue.labels.includes(LABELS.blocked)) {
+            await addLabel(issue.number, LABELS.blocked, cwd);
+            log(`issue-${issue.number}`, `blocked by #${blockedBy.join(", #")}`);
+          }
+          continue;
+        }
+        if (issue.labels.includes(LABELS.blocked)) {
+          await removeLabel(issue.number, LABELS.blocked, cwd);
+          log(`issue-${issue.number}`, `unblocked`);
+        }
         const jobName = `triage-${issue.number}`;
         if (activeJobs.has(jobName)) continue;
         activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "triage" });
@@ -256,56 +328,7 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         });
       }
 
-      // Dispatch plan-issue for needs-plan issues
-      for (const issue of byLabel(LABELS.needsPlan)) {
-        if (inProgressNums.has(issue.number)) continue;
-        const jobName = `plan-${issue.number}`;
-        if (activeJobs.has(jobName)) continue;
-        activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "plan" });
-        log(jobName, `planning issue #${issue.number}`);
-        planIssue(issue.number, config, cwd).then(() => {
-          activeJobs.delete(jobName);
-          log(jobName, `done`);
-        }).catch((err) => {
-          activeJobs.delete(jobName);
-          log(jobName, `error: ${String(err).slice(0, 60)}`);
-        });
-      }
-
-      // Dispatch fix for autofix issues (and retry stuck ones)
-      for (const issue of byLabel(LABELS.autofix)) {
-        if (inProgressNums.has(issue.number)) continue;
-        const existingState = await loadState(stateDir, repoName, issue.number);
-        const jobName = `fix-${issue.number}`;
-        if (activeJobs.has(jobName)) continue;
-
-        let retryModel: string | undefined;
-        if (existingState) {
-          if (existingState.command === "triage") {
-            // Leftover triage state — proceed normally
-          } else if (existingState.command === "fix-issue") {
-            const attempts = existingState.fixAttempts ?? 0;
-            if (attempts >= 3 || !issue.labels.includes(LABELS.waiting)) continue;
-            retryModel = "opus";
-            log(jobName, `retry stuck fix (attempt ${attempts + 1})`);
-            await removeLabel(issue.number, LABELS.waiting, cwd);
-          } else {
-            continue;
-          }
-        }
-
-        activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "fix" });
-        log(jobName, retryModel ? `retrying fix for issue #${issue.number}` : `starting fix for issue #${issue.number}`);
-        fixIssue(issue.number, config, cwd, false, retryModel).then(() => {
-          activeJobs.delete(jobName);
-          log(jobName, `done`);
-        }).catch((err) => {
-          activeJobs.delete(jobName);
-          log(jobName, `error: ${String(err).slice(0, 60)}`);
-        });
-      }
-
-      // Check waiting issues for human replies — only fetch full data for updated ones
+      // Check waiting issues for human replies — exempt from cap, just resets label
       const waitingIssues = byLabel(LABELS.waiting);
       const updatedWaiting = waitingIssues.filter((i) => issueLastUpdated.get(i.number) !== i.updatedAt);
       for (const i of waitingIssues) issueLastUpdated.set(i.number, i.updatedAt);
@@ -336,11 +359,41 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         });
       }
 
-      // Retry changes-requested and failed PRs
+      // PIPELINE STAGES — highest priority among capped jobs (near completion)
+      const nextQueue: typeof queue = [];
+      for (const stage of PIPELINE_STAGES) {
+        for (const pr of prsByLabel(STAGE_LABELS[stage])) {
+          if (activeJobs.size >= maxJobs) break;
+          if (pr.labels.includes(LABELS.inProgress)) continue;
+          const jobName = `${stage}-${pr.number}`;
+          if (activeJobs.has(jobName)) continue;
+          nextQueue.push({ stage, prTitle: pr.title, prNumber: pr.number });
+          activeJobs.set(jobName, { label: pr.title, startedAt: Date.now(), stage });
+          log(jobName, `starting ${stage} for PR #${pr.number}`);
+          let stagePromise: Promise<{ success: boolean }> = Promise.resolve({ success: false });
+          switch (stage) {
+            case "verify": stagePromise = verifyPR(pr.number, config, cwd); break;
+            case "review": stagePromise = reviewPR(pr.number, config, cwd); break;
+            case "audit": stagePromise = auditPR(pr.number, config, cwd); break;
+            case "merge": stagePromise = mergeRun([], config, cwd).then(() => ({ success: true })); break;
+          }
+          stagePromise.then(({ success }) => {
+            activeJobs.delete(jobName);
+            log(jobName, success ? `done` : `done (not advanced)`);
+          }).catch((err) => {
+            activeJobs.delete(jobName);
+            log(jobName, `error: ${String(err).slice(0, 60)}`);
+          });
+        }
+      }
+      queue = nextQueue;
+
+      // FIX-PR — second priority: changes-requested PRs already in flight
       const retryPRs = allOpenPRs.filter((pr) =>
         pr.labels.includes(LABELS.changesRequested) || pr.labels.includes(LABELS.failed)
       );
       for (const pr of retryPRs) {
+        if (activeJobs.size >= maxJobs) break;
         if (pr.labels.includes(LABELS.inProgress)) continue;
         if (pr.labels.includes(LABELS.approved)) continue;
         const issueNum = parsePRIssueNumber(pr.body);
@@ -365,33 +418,79 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         });
       }
 
-      // Dispatch pipeline stages
-      const nextQueue: typeof queue = [];
-      for (const stage of PIPELINE_STAGES) {
-        for (const pr of prsByLabel(STAGE_LABELS[stage])) {
-          if (pr.labels.includes(LABELS.inProgress)) continue;
-          const jobName = `${stage}-${pr.number}`;
-          if (activeJobs.has(jobName)) continue;
-          nextQueue.push({ stage, prTitle: pr.title, prNumber: pr.number });
-          activeJobs.set(jobName, { label: pr.title, startedAt: Date.now(), stage });
-          log(jobName, `starting ${stage} for PR #${pr.number}`);
-          let stagePromise: Promise<{ success: boolean }> = Promise.resolve({ success: false });
-          switch (stage) {
-            case "verify": stagePromise = verifyPR(pr.number, config, cwd); break;
-            case "review": stagePromise = reviewPR(pr.number, config, cwd); break;
-            case "audit": stagePromise = auditPR(pr.number, config, cwd); break;
-            case "merge": stagePromise = mergeRun([], config, cwd).then(() => ({ success: true })); break;
+      // PLAN + FIX — sorted by issue priority (bug > enhancement, high > medium > low)
+      for (const issue of sortByPriority(byLabel(LABELS.needsPlan))) {
+        if (activeJobs.size >= maxJobs) break;
+        if (inProgressNums.has(issue.number)) continue;
+        const blockedBy = checkDeps(issue.body, openIssueNums);
+        if (blockedBy.length > 0) {
+          if (!issue.labels.includes(LABELS.blocked)) {
+            await addLabel(issue.number, LABELS.blocked, cwd);
+            log(`issue-${issue.number}`, `blocked by #${blockedBy.join(", #")}`);
           }
-          stagePromise.then(({ success }) => {
-            activeJobs.delete(jobName);
-            log(jobName, success ? `done` : `done (not advanced)`);
-          }).catch((err) => {
-            activeJobs.delete(jobName);
-            log(jobName, `error: ${String(err).slice(0, 60)}`);
-          });
+          continue;
         }
+        if (issue.labels.includes(LABELS.blocked)) {
+          await removeLabel(issue.number, LABELS.blocked, cwd);
+          log(`issue-${issue.number}`, `unblocked`);
+        }
+        const jobName = `plan-${issue.number}`;
+        if (activeJobs.has(jobName)) continue;
+        activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "plan" });
+        log(jobName, `planning issue #${issue.number}`);
+        planIssue(issue.number, config, cwd).then(() => {
+          activeJobs.delete(jobName);
+          log(jobName, `done`);
+        }).catch((err) => {
+          activeJobs.delete(jobName);
+          log(jobName, `error: ${String(err).slice(0, 60)}`);
+        });
       }
-      queue = nextQueue;
+
+      for (const issue of sortByPriority(byLabel(LABELS.autofix))) {
+        if (activeJobs.size >= maxJobs) break;
+        if (inProgressNums.has(issue.number)) continue;
+        const blockedBy = checkDeps(issue.body, openIssueNums);
+        if (blockedBy.length > 0) {
+          if (!issue.labels.includes(LABELS.blocked)) {
+            await addLabel(issue.number, LABELS.blocked, cwd);
+            log(`issue-${issue.number}`, `blocked by #${blockedBy.join(", #")}`);
+          }
+          continue;
+        }
+        if (issue.labels.includes(LABELS.blocked)) {
+          await removeLabel(issue.number, LABELS.blocked, cwd);
+          log(`issue-${issue.number}`, `unblocked`);
+        }
+        const existingState = await loadState(stateDir, repoName, issue.number);
+        const jobName = `fix-${issue.number}`;
+        if (activeJobs.has(jobName)) continue;
+
+        let retryModel: string | undefined;
+        if (existingState) {
+          if (existingState.command === "triage") {
+            // Leftover triage state — proceed normally
+          } else if (existingState.command === "fix-issue") {
+            const attempts = existingState.fixAttempts ?? 0;
+            if (attempts >= 3 || !issue.labels.includes(LABELS.waiting)) continue;
+            retryModel = "opus";
+            log(jobName, `retry stuck fix (attempt ${attempts + 1})`);
+            await removeLabel(issue.number, LABELS.waiting, cwd);
+          } else {
+            continue;
+          }
+        }
+
+        activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "fix" });
+        log(jobName, retryModel ? `retrying fix for issue #${issue.number}` : `starting fix for issue #${issue.number}`);
+        fixIssue(issue.number, config, cwd, false, retryModel).then(() => {
+          activeJobs.delete(jobName);
+          log(jobName, `done`);
+        }).catch((err) => {
+          activeJobs.delete(jobName);
+          log(jobName, `error: ${String(err).slice(0, 60)}`);
+        });
+      }
     } catch (err) {
       log("poll", `error: ${String(err).slice(0, 80)}`);
     }
