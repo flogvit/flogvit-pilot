@@ -15,6 +15,7 @@ export const LABELS = {
   changesRequested: "flogvit-coder:changes-requested",
   needsTriage: "flogvit-coder:needs-triage",
   needsPlan: "flogvit-coder:needs-plan",
+  blocked: "flogvit-coder:blocked",
   ignore: "flogvit-coder:ignore",
 } as const;
 
@@ -33,6 +34,7 @@ const LABEL_DEFINITIONS = [
   { name: LABELS.changesRequested, description: "flogvit-coder: review requested changes", color: "fbca04" },
   { name: LABELS.needsTriage, description: "flogvit-coder: needs triage evaluation", color: "bfd4f2" },
   { name: LABELS.needsPlan, description: "flogvit-coder: needs implementation plan", color: "d4c5f9" },
+  { name: LABELS.blocked, description: "flogvit-coder: blocked by another issue", color: "e4e669" },
   { name: LABELS.ignore, description: "flogvit-coder: ignore this issue/PR entirely", color: "eeeeee" },
 ];
 
@@ -90,15 +92,29 @@ export async function listIssuesWithLabel(
   return JSON.parse(result);
 }
 
-export async function listOpenIssues(cwd: string): Promise<{ number: number; title: string; labels: string[]; updatedAt: string }[]> {
-  const result = await $`gh issue list --state open --limit 100 --json number,title,labels,updatedAt`.cwd(cwd).text();
+export async function listOpenIssues(cwd: string): Promise<{ number: number; title: string; body: string; labels: string[]; updatedAt: string }[]> {
+  const result = await $`gh issue list --state open --limit 100 --json number,title,body,labels,updatedAt`.cwd(cwd).text();
   const data = JSON.parse(result);
-  return data.map((i: { number: number; title: string; labels: { name: string }[]; updatedAt: string }) => ({
+  return data.map((i: { number: number; title: string; body: string; labels: { name: string }[]; updatedAt: string }) => ({
     number: i.number,
     title: i.title,
+    body: i.body ?? "",
     labels: i.labels.map((l) => l.name),
     updatedAt: i.updatedAt,
   }));
+}
+
+export function parseDependsOn(body: string): number[] {
+  const nums: number[] = [];
+  for (const line of body.split("\n")) {
+    const match = line.match(/^Depends-on:\s*(.+)/i);
+    if (match) {
+      for (const ref of match[1].matchAll(/#(\d+)/g)) {
+        nums.push(parseInt(ref[1], 10));
+      }
+    }
+  }
+  return [...new Set(nums)];
 }
 
 export async function listOpenPRs(cwd: string): Promise<PR[]> {
@@ -192,6 +208,22 @@ export async function getPRDiff(prNumber: number, cwd: string): Promise<string> 
 export function extractPRNumber(prUrl: string): number {
   const match = prUrl.match(/\/pull\/(\d+)\/?$/);
   if (!match) return NaN;
+  return parseInt(match[1], 10);
+}
+
+export async function createIssue(
+  title: string,
+  body: string,
+  labels: string[],
+  cwd: string
+): Promise<number> {
+  const args: string[] = ["issue", "create", "--title", title, "--body", body];
+  for (const label of labels) {
+    args.push("--label", label);
+  }
+  const result = await $`gh ${args}`.cwd(cwd).text();
+  const match = result.trim().match(/\/issues\/(\d+)$/m);
+  if (!match) throw new Error(`Failed to parse issue number from gh output: ${result}`);
   return parseInt(match[1], 10);
 }
 

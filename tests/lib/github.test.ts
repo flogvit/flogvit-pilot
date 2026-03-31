@@ -4,6 +4,7 @@ import {
   parseBranchName,
   LABELS,
   extractPRNumber,
+  parseDependsOn,
 } from "../../src/lib/github";
 
 describe("formatIssueComment", () => {
@@ -90,5 +91,32 @@ describe("extractPRNumber", () => {
   });
   test("works with single-digit PR numbers", () => {
     expect(extractPRNumber("https://github.com/my-org/my-repo/pull/1")).toBe(1);
+  });
+});
+
+describe("parseDependsOn", () => {
+  test("parses single dependency", () => {
+    expect(parseDependsOn("Depends-on: #5")).toEqual([5]);
+  });
+
+  test("parses multiple dependencies", () => {
+    expect(parseDependsOn("Depends-on: #3, #7")).toEqual([3, 7]);
+  });
+
+  test("returns empty for no dependency line", () => {
+    expect(parseDependsOn("Just a normal body")).toEqual([]);
+  });
+
+  test("is case-insensitive", () => {
+    expect(parseDependsOn("DEPENDS-ON: #10")).toEqual([10]);
+  });
+
+  test("deduplicates", () => {
+    expect(parseDependsOn("Depends-on: #5, #5")).toEqual([5]);
+  });
+
+  test("parses from multi-line body", () => {
+    const body = "## Task\n\nDo something.\n\nDepends-on: #3, #4\n\nMore text";
+    expect(parseDependsOn(body)).toEqual([3, 4]);
   });
 });
