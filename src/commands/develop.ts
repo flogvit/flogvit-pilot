@@ -40,10 +40,20 @@ export async function findSourceRoot(): Promise<string | null> {
 export interface LogError {
   repo: string;
   file: string;
-  excerpt: string; // last 600 chars max — enough context, not too much
+  filePath: string;
+  excerpt: string; // only the new content since last scan, capped at 600 chars
 }
 
-export async function scanNewErrorLogs(since: number): Promise<LogError[]> {
+/**
+ * Scan for error logs, returning only content that is new since last call.
+ *
+ * @param since  - mtime threshold for files not yet in seenOffsets (first-time discovery)
+ * @param seenOffsets - mutable map of filePath → char offset already processed; updated in place
+ */
+export async function scanNewErrorLogs(
+  since: number,
+  seenOffsets: Map<string, number>
+): Promise<LogError[]> {
   const homeDir = process.env.HOME ?? homedir();
   const logBase = resolve(homeDir, ".flogvit-pilot", "logs");
   const errors: LogError[] = [];
@@ -60,12 +70,23 @@ export async function scanNewErrorLogs(since: number): Promise<LogError[]> {
 
       const filePath = resolve(repoDir, file);
       const fileStat = await stat(filePath).catch(() => null);
-      if (!fileStat || fileStat.mtimeMs <= since) continue;
+      if (!fileStat) continue;
+
+      const alreadySeen = seenOffsets.has(filePath);
+
+      // For new files: only pick up if modified after `since`
+      if (!alreadySeen && fileStat.mtimeMs <= since) continue;
 
       const content = await readFile(filePath, "utf-8").catch(() => "");
-      if (!content.trim()) continue;
+      const offset = seenOffsets.get(filePath) ?? 0;
+      const newContent = content.slice(offset);
 
-      const lower = content.toLowerCase();
+      // Always advance the offset so we don't re-read old content
+      seenOffsets.set(filePath, content.length);
+
+      if (!newContent.trim()) continue;
+
+      const lower = newContent.toLowerCase();
       const hasError =
         lower.includes("shellerror") ||
         lower.includes("error:") ||
@@ -78,7 +99,8 @@ export async function scanNewErrorLogs(since: number): Promise<LogError[]> {
         errors.push({
           repo,
           file,
-          excerpt: content.trim().slice(-600), // tail of log — where errors usually appear
+          filePath,
+          excerpt: newContent.trim().slice(-600),
         });
       }
     }
@@ -190,7 +212,7 @@ export async function run(args: string[], config: Config, cwd: string): Promise<
   }
 
   const since = Date.now() - hours * 60 * 60 * 1000;
-  const errors = await scanNewErrorLogs(since);
+  const errors = await scanNewErrorLogs(since, new Map());
   console.log(`Found ${errors.length} error logs in the last ${hours}h`);
 
   if (errors.length === 0) {

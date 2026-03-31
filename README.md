@@ -38,6 +38,9 @@ flogvit-pilot <command> [options]
 | `review-pr <#>` | AI code review of a PR → advance to `needs-audit` |
 | `audit-pr <#>` | Security audit of a PR → advance to `approved` |
 | `merge` | Merge all approved PRs |
+| `add-issue <title> [body]` | Create a GitHub issue with optional label flags |
+| `import-plan <file>` | Import a plan file as GitHub issues under a milestone |
+| `develop` | One-shot supervisor: scan error logs and take action |
 
 #### Interactive
 
@@ -61,6 +64,32 @@ flogvit-pilot <command> [options]
 | `changelog` | Generate changelog |
 | `test-gen` | Generate missing tests |
 | `pr-review <#>` | Review a pull request |
+
+### `watch` flags
+
+```
+--live               Run continuously (poll every 60s) instead of a single cron pass
+--supervisor         Monitor error logs after each poll and take GitHub actions automatically
+--self-improve       Like --supervisor, but also fixes flogvit-pilot source when bugs are found
+--jobs <n>           Override max concurrent jobs (default: config max_concurrent_jobs or 3)
+--repos <paths>      Comma-separated list of repo paths to watch
+```
+
+### `add-issue` flags
+
+```bash
+flogvit-pilot add-issue "Title" "Optional body" [--autofix] [--label <name>]
+```
+
+Adds `needs-triage` if no label is given.
+
+### `import-plan` flags
+
+```bash
+flogvit-pilot import-plan <plan-file> [--autofix] [--dry-run]
+```
+
+Parses `### Task N:` sections from a Markdown plan file, creates a GitHub milestone from the `# Title`, and opens one issue per task. With `--autofix` each issue gets the `autofix` label; otherwise `needs-triage`.
 
 ### Interactive workflow
 

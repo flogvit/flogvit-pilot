@@ -292,7 +292,9 @@ function renderUI(repoName: string, queue: { stage: string; title: string; numbe
       : supervisorStatus.lastScanAt
       ? `✓ last scan ${Math.floor((now - supervisorStatus.lastScanAt) / 1000)}s ago`
       : "  waiting for first poll";
-    const summary = supervisorStatus.lastSummary ? `  ${supervisorStatus.lastSummary}` : "";
+    const isNoise = (s: string) => /nothing to do|no errors|all (systems|ok)|no new/i.test(s);
+    const summary = supervisorStatus.lastSummary && !isNoise(supervisorStatus.lastSummary)
+      ? `  ${supervisorStatus.lastSummary}` : "";
     console.log(`SUPERVISOR  [${mode}]`);
     console.log(`  ${state}${summary}`);
     console.log();
@@ -320,6 +322,8 @@ async function watchLive(config: Config, cwd: string, opts: {
   let lastLogScanTime = Date.now() - 60 * 60 * 1000;
   let lastSupervisorCompletedAt = 0;
   const SUPERVISOR_COOLDOWN_MS = 5 * 60 * 1000; // don't re-run within 5 minutes of last completion
+  // Track read offsets per log file so we only send new content to the supervisor
+  const logOffsets = new Map<string, number>();
 
   // Resolve source root once for self-improve
   const sourceRoot = selfImprove ? (await findSourceRoot() ?? undefined) : undefined;
@@ -600,7 +604,8 @@ async function watchLive(config: Config, cwd: string, opts: {
       supervisorStatus.lastScanAt = pollStart;
 
       if (cooldownRemaining <= 0) {
-        const errors = await scanNewErrorLogs(since).catch(() => []);
+        // logOffsets is updated in place by scanNewErrorLogs — offsets advance even for non-error content
+        const errors = await scanNewErrorLogs(since, logOffsets).catch(() => []);
         if (errors.length > 0) {
           supervisorStatus.running = true;
           activeJobs.set("supervisor", { label: `${errors.length} error(s) in logs`, startedAt: Date.now(), stage: "supervisor", model: "haiku" });
