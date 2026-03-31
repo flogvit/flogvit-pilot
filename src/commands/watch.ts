@@ -1,6 +1,9 @@
+import { $ } from "bun";
 import { resolve, basename } from "path";
 import { homedir } from "os";
+import { readdir, rm } from "fs/promises";
 import type { Config } from "../lib/config";
+import { resolveToolForCommand } from "../lib/config";
 import { listOpenIssues, listOpenPRs, getIssue, removeLabel, addLabel, addPRLabel, removePRLabel, parseDependsOn, LABELS } from "../lib/github";
 import { loadState, saveState } from "../lib/state";
 import { triageIssue } from "./triage";
@@ -11,6 +14,7 @@ import { verifyPR } from "./verify";
 import { reviewPR } from "./review-pr";
 import { auditPR } from "./audit-pr";
 import { run as mergeRun } from "./merge";
+import { worktreesBaseDir } from "../lib/worktree";
 import { PIPELINE_STAGES, STAGE_LABELS } from "../lib/pipeline";
 import { findAnsweredIssues } from "./watch-helpers";
 
@@ -41,21 +45,21 @@ function sortByPriority<T extends { labels: string[] }>(items: T[]): T[] {
 async function watchCron(config: Config, cwd: string): Promise<void> {
   const repoName = basename(cwd);
   const homeDir = process.env.HOME ?? homedir();
-  const stateDir = resolve(homeDir, ".flogvit-coder", "state");
+  const stateDir = resolve(homeDir, ".flogvit-pilot", "state");
 
   // Fetch all open issues and PRs in two calls — filter locally
   const allOpenIssues = await listOpenIssues(cwd);
   const allOpenPRs = await listOpenPRs(cwd);
 
-  const byLabel = (label: string) => allOpenIssues.filter((i) => i.labels.includes(label));
-  const prsByLabel = (label: string) => allOpenPRs.filter((pr) => pr.labels.includes(label));
+  const byLabel = (label: string) => allOpenIssues.filter((i) => i.labels.includes(label) && !i.labels.includes(LABELS.ignore));
+  const prsByLabel = (label: string) => allOpenPRs.filter((pr) => pr.labels.includes(label) && !pr.labels.includes(LABELS.ignore));
   const inProgressNums = new Set(byLabel(LABELS.inProgress).map((i) => i.number));
   const openIssueNums = new Set(allOpenIssues.map((i) => i.number));
 
   // 1. Detect unlabeled issues → set needs-triage
   for (const issue of allOpenIssues) {
     if (issue.labels.includes(LABELS.ignore)) continue;
-    if (issue.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX) || ALL_KNOWN_LABELS.has(l as never))) continue;
+    if (issue.labels.some((l) => hasOurPrefix(l) || ALL_KNOWN_LABELS.has(l as never))) continue;
     console.log(`Found unlabeled issue #${issue.number}: ${issue.title} → needs-triage`);
     await addLabel(issue.number, LABELS.needsTriage, cwd);
   }
@@ -63,7 +67,7 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
   // 2. Detect unlabeled PRs → set needs-verify
   for (const pr of allOpenPRs) {
     if (pr.labels.includes(LABELS.ignore)) continue;
-    if (pr.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX))) continue;
+    if (pr.labels.some((l) => hasOurPrefix(l))) continue;
     console.log(`Found unlabeled PR #${pr.number}: ${pr.title} → needs-verify`);
     await addPRLabel(pr.number, LABELS.needsVerify, cwd);
   }
@@ -143,7 +147,7 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
   // 6. Check for answered waiting issues → set needs-triage (reset triageCount so hard limit doesn't block)
   const waitingIssues = byLabel(LABELS.waiting);
   const waitingWithComments = await Promise.all(waitingIssues.map((i) => getIssue(i.number, cwd)));
-  const answeredNums = findAnsweredIssues(waitingWithComments, "🤖 **flogvit-coder**");
+  const answeredNums = findAnsweredIssues(waitingWithComments, ["🤖 **flogvit-pilot**", "🤖 **flogvit-coder**"]);
   for (const num of answeredNums) {
     console.log(`Issue #${num} has been answered, setting needs-triage...`);
     const existingState = await loadState(stateDir, repoName, num);
@@ -195,9 +199,28 @@ interface ActiveJob {
   label: string;
   startedAt: number;
   stage: string;
+  model: string;
 }
 
-const FLOGVIT_CODER_PREFIX = "flogvit-coder:";
+/** Shorten a full model name to a display token, e.g. "claude-opus-4-5" → "opus" */
+function shortModel(model: string | undefined): string {
+  if (!model) return "sonnet";
+  if (model.includes("opus")) return "opus";
+  if (model.includes("haiku")) return "haiku";
+  if (model.includes("sonnet")) return "sonnet";
+  return model.split("-").pop() ?? model;
+}
+
+/** Resolve the effective model for a command, with an optional override (e.g. retry model). */
+function jobModel(config: Config, command: string, override?: string): string {
+  if (override) return shortModel(override);
+  const toolName = resolveToolForCommand(config, command);
+  const model = config.tools[toolName]?.model as string | undefined;
+  return shortModel(model);
+}
+
+const FLOGVIT_LABEL_PREFIXES = ["flogvit-pilot:", "flogvit-coder:"];
+const hasOurPrefix = (l: string) => FLOGVIT_LABEL_PREFIXES.some((p) => l.startsWith(p));
 const ALL_KNOWN_LABELS = new Set(Object.values(LABELS));
 
 // Cache of last-seen updatedAt per waiting issue — avoids fetching full issue on every poll
@@ -217,7 +240,7 @@ function renderUI(repoName: string, queue: { stage: string; prTitle: string; prN
   const now = Date.now();
   console.clear();
   console.log(
-    `━━━ flogvit-coder · ${repoName} ${"━".repeat(Math.max(0, 50 - repoName.length))}  [${new Date().toLocaleTimeString("no")}]\n`
+    `━━━ flogvit-pilot · ${repoName} ${"━".repeat(Math.max(0, 50 - repoName.length))}  [${new Date().toLocaleTimeString("no")}]\n`
   );
 
   if (activeJobs.size > 0) {
@@ -227,7 +250,7 @@ function renderUI(repoName: string, queue: { stage: string; prTitle: string; prN
       const m = Math.floor(elapsed / 60);
       const s = elapsed % 60;
       console.log(
-        `  ● ${name.padEnd(18)} ${job.stage.padEnd(10)} ${String(m).padStart(1)}m${String(s).padStart(2, "0")}s   ${job.label}`
+        `  ● ${name.padEnd(18)} ${job.stage.padEnd(10)} ${String(m).padStart(1)}m${String(s).padStart(2, "0")}s   ${job.model.padEnd(7)}  ${job.label}`
       );
     }
     console.log();
@@ -247,18 +270,50 @@ function renderUI(repoName: string, queue: { stage: string; prTitle: string; prN
   }
 }
 
-async function watchLive(config: Config, cwd: string): Promise<void> {
+async function watchLive(config: Config, cwd: string, selfImproveThreshold?: number): Promise<void> {
   const repoName = basename(cwd);
   const homeDir = process.env.HOME ?? homedir();
-  const stateDir = resolve(homeDir, ".flogvit-coder", "state");
+  const stateDir = resolve(homeDir, ".flogvit-pilot", "state");
 
   let queue: { stage: string; prTitle: string; prNumber: number }[] = [];
   let running = true;
 
+  // Self-improve: track infrastructure errors (ShellError etc.) across jobs
+  let sessionErrorCount = 0;
+  let developRunning = false;
+
+  function onJobError(jobName: string, err: unknown) {
+    const msg = String(err);
+    activeJobs.delete(jobName);
+    log(jobName, `error: ${msg.slice(0, 60)}`);
+
+    if (!selfImproveThreshold || developRunning) return;
+    // Only count infrastructure errors, not agent STUCK outcomes
+    if (msg.includes("ShellError") || msg.includes("Failed with exit code")) {
+      sessionErrorCount++;
+      if (sessionErrorCount >= selfImproveThreshold) {
+        sessionErrorCount = 0;
+        developRunning = true;
+        log("develop", `triggering self-improve after ${selfImproveThreshold} errors`);
+        Bun.spawn(["flogvit-pilot", "develop", "--auto"], {
+          cwd,
+          stdout: "inherit",
+          stderr: "inherit",
+        }).exited.then(() => {
+          developRunning = false;
+          log("develop", "done — review PR in flogvit-pilot repo");
+        }).catch(() => {
+          developRunning = false;
+          log("develop", "failed to run develop");
+        });
+      }
+    }
+  }
+
   const cleanup = () => {
     running = false;
     console.clear();
-    console.log("flogvit-coder: shutting down.");
+    console.log("flogvit-pilot: shutting down.");
     process.exit(0);
   };
   process.once("SIGINT", cleanup);
@@ -277,15 +332,15 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
       const allOpenIssues = await listOpenIssues(cwd);
       const allOpenPRs = await listOpenPRs(cwd);
 
-      const byLabel = (label: string) => allOpenIssues.filter((i) => i.labels.includes(label));
-      const prsByLabel = (label: string) => allOpenPRs.filter((pr) => pr.labels.includes(label));
+      const byLabel = (label: string) => allOpenIssues.filter((i) => i.labels.includes(label) && !i.labels.includes(LABELS.ignore));
+      const prsByLabel = (label: string) => allOpenPRs.filter((pr) => pr.labels.includes(label) && !pr.labels.includes(LABELS.ignore));
       const inProgressNums = new Set(byLabel(LABELS.inProgress).map((i) => i.number));
       const openIssueNums = new Set(allOpenIssues.map((i) => i.number));
 
       // Detect unlabeled issues → set needs-triage
       for (const issue of allOpenIssues) {
         if (issue.labels.includes(LABELS.ignore)) continue;
-        if (issue.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX) || ALL_KNOWN_LABELS.has(l as never))) continue;
+        if (issue.labels.some((l) => hasOurPrefix(l) || ALL_KNOWN_LABELS.has(l as never))) continue;
         await addLabel(issue.number, LABELS.needsTriage, cwd);
         log(`issue-${issue.number}`, `unlabeled → needs-triage`);
       }
@@ -293,7 +348,7 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
       // Detect unlabeled PRs → set needs-verify
       for (const pr of allOpenPRs) {
         if (pr.labels.includes(LABELS.ignore)) continue;
-        if (pr.labels.some((l) => l.startsWith(FLOGVIT_CODER_PREFIX))) continue;
+        if (pr.labels.some((l) => hasOurPrefix(l))) continue;
         await addPRLabel(pr.number, LABELS.needsVerify, cwd);
         log(`pr-${pr.number}`, `unlabeled PR → needs-verify`);
       }
@@ -317,15 +372,12 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         }
         const jobName = `triage-${issue.number}`;
         if (activeJobs.has(jobName)) continue;
-        activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "triage" });
+        activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "triage", model: jobModel(config, "triage") });
         log(jobName, `triaging issue #${issue.number}`);
         triageIssue(issue.number, config, cwd).then(() => {
           activeJobs.delete(jobName);
           log(jobName, `done`);
-        }).catch((err) => {
-          activeJobs.delete(jobName);
-          log(jobName, `error: ${String(err).slice(0, 60)}`);
-        });
+        }).catch((err) => onJobError(jobName, err));
       }
 
       // Check waiting issues for human replies — exempt from cap, just resets label
@@ -336,12 +388,12 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         if (!waitingIssues.some((i) => i.number === num)) issueLastUpdated.delete(num);
       }
       const waitingWithComments = await Promise.all(updatedWaiting.map((i) => getIssue(i.number, cwd)));
-      const answeredNums = findAnsweredIssues(waitingWithComments, "🤖 **flogvit-coder**");
+      const answeredNums = findAnsweredIssues(waitingWithComments, ["🤖 **flogvit-pilot**", "🤖 **flogvit-coder**"]);
       for (const num of answeredNums) {
         const waitingIssue = waitingIssues.find((i) => i.number === num)!;
         const jobName = `retriage-${num}`;
         if (activeJobs.has(jobName)) continue;
-        activeJobs.set(jobName, { label: waitingIssue.title, startedAt: Date.now(), stage: "triage" });
+        activeJobs.set(jobName, { label: waitingIssue.title, startedAt: Date.now(), stage: "triage", model: jobModel(config, "triage") });
         log(jobName, `re-triaging answered issue #${num}`);
         (async () => {
           const existingState = await loadState(stateDir, repoName, num);
@@ -353,10 +405,7 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         })().then(() => {
           activeJobs.delete(jobName);
           log(jobName, `done`);
-        }).catch((err) => {
-          activeJobs.delete(jobName);
-          log(jobName, `error: ${String(err).slice(0, 60)}`);
-        });
+        }).catch((err) => onJobError(jobName, err));
       }
 
       // PIPELINE STAGES — highest priority among capped jobs (near completion)
@@ -368,7 +417,7 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
           const jobName = `${stage}-${pr.number}`;
           if (activeJobs.has(jobName)) continue;
           nextQueue.push({ stage, prTitle: pr.title, prNumber: pr.number });
-          activeJobs.set(jobName, { label: pr.title, startedAt: Date.now(), stage });
+          activeJobs.set(jobName, { label: pr.title, startedAt: Date.now(), stage, model: jobModel(config, stage) });
           log(jobName, `starting ${stage} for PR #${pr.number}`);
           let stagePromise: Promise<{ success: boolean }> = Promise.resolve({ success: false });
           switch (stage) {
@@ -380,10 +429,7 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
           stagePromise.then(({ success }) => {
             activeJobs.delete(jobName);
             log(jobName, success ? `done` : `done (not advanced)`);
-          }).catch((err) => {
-            activeJobs.delete(jobName);
-            log(jobName, `error: ${String(err).slice(0, 60)}`);
-          });
+          }).catch((err) => onJobError(jobName, err));
         }
       }
       queue = nextQueue;
@@ -401,21 +447,22 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         const state = await loadState(stateDir, repoName, issueNum);
         const prFixAttempts = state?.prFixAttempts ?? 0;
         if (prFixAttempts >= 3) {
-          log(`fix-pr-${pr.number}`, `prFixAttempts exhausted, skipping`);
+          // Escalate to human — remove failure labels and add waiting
+          log(`fix-pr-${pr.number}`, `fix-pr exhausted after ${prFixAttempts} attempts — escalating`);
+          await removePRLabel(pr.number, LABELS.changesRequested, cwd).catch(() => {});
+          await removePRLabel(pr.number, LABELS.failed, cwd).catch(() => {});
+          await addPRLabel(pr.number, LABELS.waiting, cwd).catch(() => {});
           continue;
         }
         const jobName = `fix-pr-${pr.number}`;
         if (activeJobs.has(jobName)) continue;
         const model = prFixAttempts >= 1 ? "opus" : undefined;
-        activeJobs.set(jobName, { label: pr.title, startedAt: Date.now(), stage: "fix-pr" });
+        activeJobs.set(jobName, { label: pr.title, startedAt: Date.now(), stage: "fix-pr", model: jobModel(config, "fix-pr", model) });
         log(jobName, `fixing PR #${pr.number} (attempt ${prFixAttempts + 1})`);
         fixPR(pr.number, config, cwd, false, model).then(() => {
           activeJobs.delete(jobName);
           log(jobName, `done`);
-        }).catch((err) => {
-          activeJobs.delete(jobName);
-          log(jobName, `error: ${String(err).slice(0, 60)}`);
-        });
+        }).catch((err) => onJobError(jobName, err));
       }
 
       // PLAN + FIX — sorted by issue priority (bug > enhancement, high > medium > low)
@@ -436,15 +483,12 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
         }
         const jobName = `plan-${issue.number}`;
         if (activeJobs.has(jobName)) continue;
-        activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "plan" });
+        activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "plan", model: jobModel(config, "plan-issue") });
         log(jobName, `planning issue #${issue.number}`);
         planIssue(issue.number, config, cwd).then(() => {
           activeJobs.delete(jobName);
           log(jobName, `done`);
-        }).catch((err) => {
-          activeJobs.delete(jobName);
-          log(jobName, `error: ${String(err).slice(0, 60)}`);
-        });
+        }).catch((err) => onJobError(jobName, err));
       }
 
       for (const issue of sortByPriority(byLabel(LABELS.autofix))) {
@@ -481,15 +525,12 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
           }
         }
 
-        activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "fix" });
+        activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "fix", model: jobModel(config, "fix-issue", retryModel) });
         log(jobName, retryModel ? `retrying fix for issue #${issue.number}` : `starting fix for issue #${issue.number}`);
         fixIssue(issue.number, config, cwd, false, retryModel).then(() => {
           activeJobs.delete(jobName);
           log(jobName, `done`);
-        }).catch((err) => {
-          activeJobs.delete(jobName);
-          log(jobName, `error: ${String(err).slice(0, 60)}`);
-        });
+        }).catch((err) => onJobError(jobName, err));
       }
     } catch (err) {
       log("poll", `error: ${String(err).slice(0, 80)}`);
@@ -510,6 +551,23 @@ async function watchLive(config: Config, cwd: string): Promise<void> {
       log(`startup`, `removing orphaned in-progress from PR #${pr.number}`);
       await removePRLabel(pr.number, LABELS.inProgress, cwd).catch(() => {});
     }
+  }
+
+  // On startup, remove all stale worktrees (no jobs are running yet)
+  const wtBase = worktreesBaseDir(homeDir, repoName);
+  try {
+    const entries = await readdir(wtBase);
+    for (const entry of entries) {
+      const wtPath = resolve(wtBase, entry);
+      log(`startup`, `removing stale worktree ${entry}`);
+      await $`git worktree remove ${wtPath} --force`.cwd(cwd).nothrow();
+      await rm(wtPath, { recursive: true, force: true }).catch(() => {});
+    }
+    if (entries.length > 0) {
+      await $`git worktree prune`.cwd(cwd).nothrow();
+    }
+  } catch {
+    // worktrees dir doesn't exist yet — that's fine
   }
 
   // Poll immediately, then every 60 seconds
@@ -534,20 +592,28 @@ export async function run(args: string[], config: Config, cwd: string): Promise<
   const reposFlag = args.find((a) => a.startsWith("--repos"));
   const reposValue = reposFlag ? args[args.indexOf(reposFlag) + 1] : undefined;
 
+  // --self-improve or --self-improve=N (default threshold: 3)
+  const selfImproveFlag = args.find((a) => a.startsWith("--self-improve"));
+  let selfImproveThreshold: number | undefined;
+  if (selfImproveFlag) {
+    const parts = selfImproveFlag.split("=");
+    selfImproveThreshold = parts[1] ? parseInt(parts[1], 10) : 3;
+  }
+
   if (reposValue) {
     const repos = reposValue.split(",").map((r) => r.trim());
     for (const repo of repos) {
       const resolvedPath = resolve(repo);
       console.log(`Checking ${resolvedPath}...`);
       if (live) {
-        await watchLive(config, resolvedPath);
+        await watchLive(config, resolvedPath, selfImproveThreshold);
       } else {
         await watchCron(config, resolvedPath);
       }
     }
   } else {
     if (live) {
-      await watchLive(config, cwd);
+      await watchLive(config, cwd, selfImproveThreshold);
     } else {
       await watchCron(config, cwd);
     }
