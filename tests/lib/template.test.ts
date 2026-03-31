@@ -52,7 +52,7 @@ describe("loadTemplate", () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "flogvit-coder-tpl-"));
+    tempDir = await mkdtemp(join(tmpdir(), "flogvit-pilot-tpl-"));
   });
 
   afterEach(async () => {
@@ -60,7 +60,7 @@ describe("loadTemplate", () => {
   });
 
   test("loads repo override when present", async () => {
-    const repoPromptDir = join(tempDir, "repo", ".flogvit-coder", "prompts");
+    const repoPromptDir = join(tempDir, "repo", ".flogvit-pilot", "prompts");
     await mkdir(repoPromptDir, { recursive: true });
     await writeFile(join(repoPromptDir, "review.md"), "Custom: {{repo}}");
 

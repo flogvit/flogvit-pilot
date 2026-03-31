@@ -74,7 +74,7 @@ describe("loadConfig", () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "flogvit-coder-test-"));
+    tempDir = await mkdtemp(join(tmpdir(), "flogvit-pilot-test-"));
   });
 
   afterEach(async () => {

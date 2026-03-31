@@ -87,7 +87,7 @@ export async function resolveConfig(
   cliFlags?: Partial<Config>
 ): Promise<Config> {
   const homeDir = process.env.HOME ?? "~";
-  const globalConfig = await loadConfig(join(homeDir, ".flogvit-coder"));
-  const repoConfig = await loadConfig(join(repoDir, ".flogvit-coder"));
+  const globalConfig = await loadConfig(join(homeDir, ".flogvit-pilot"));
+  const repoConfig = await loadConfig(join(repoDir, ".flogvit-pilot"));
   return mergeConfigs(globalConfig, repoConfig, cliFlags);
 }

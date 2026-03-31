@@ -78,7 +78,7 @@ export class ClaudeRunner implements ToolRunner {
   async run(opts: ToolRunnerOptions): Promise<ToolResult> {
     const args = this.buildArgs(opts);
 
-    // Always strip ANTHROPIC_API_KEY so flogvit-coder agents use Max subscription.
+    // Always strip ANTHROPIC_API_KEY so flogvit-pilot agents use Max subscription.
     // If fallbackApiKey is set in config, it will be added on rate limit retry.
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) {

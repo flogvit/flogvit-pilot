@@ -1,9 +1,9 @@
 {
-  "name": "flogvit-coder",
+  "name": "flogvit-pilot",
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "flogvit-coder": "./src/cli.ts"
+    "flogvit-pilot": "./src/cli.ts"
   },
   "scripts": {
     "test": "bun test",

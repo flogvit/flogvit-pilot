@@ -13,9 +13,9 @@ export interface RepoContext {
 }
 
 async function detectTestCommand(cwd: string, language: string): Promise<string | null> {
-  // Check .flogvit-coder/config.toml for explicit test_command override
+  // Check .flogvit-pilot/config.toml for explicit test_command override
   try {
-    const raw = await readFile(join(cwd, ".flogvit-coder", "config.toml"), "utf-8");
+    const raw = await readFile(join(cwd, ".flogvit-pilot", "config.toml"), "utf-8");
     const config = parseToml(raw) as { defaults?: { test_command?: string } };
     if (config.defaults?.test_command) return config.defaults.test_command;
   } catch { /* no config */ }

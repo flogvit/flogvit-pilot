@@ -31,7 +31,7 @@ describe("PipelineJob type", () => {
     const job: PipelineJob = {
       prNumber: 42,
       prTitle: "Fix: update login flow",
-      headBranch: "flogvit-coder/fix-42",
+      headBranch: "flogvit-pilot/fix-42",
       stage: "verify",
     };
     expect(job.prNumber).toBe(42);

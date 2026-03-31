@@ -21,7 +21,7 @@ export async function loadTemplate(
 ): Promise<string> {
   const repoOverridePath = join(
     options.repoDir,
-    ".flogvit-coder",
+    ".flogvit-pilot",
     "prompts",
     `${command}.md`
   );

@@ -8,7 +8,7 @@ describe("state", () => {
   let stateDir: string;
 
   beforeEach(async () => {
-    stateDir = await mkdtemp(join(tmpdir(), "flogvit-coder-state-"));
+    stateDir = await mkdtemp(join(tmpdir(), "flogvit-pilot-state-"));
   });
 
   afterEach(async () => {
@@ -19,7 +19,7 @@ describe("state", () => {
     const state: WorkState = {
       issueNumber: 42,
       command: "fix-issue",
-      branch: "flogvit-coder/fix-42",
+      branch: "flogvit-pilot/fix-42",
       agentSummary: "Started fixing the bug, need to know if null values are valid input",
       question: "Should this function handle null values?",
       issueData: {
@@ -35,7 +35,7 @@ describe("state", () => {
     expect(loaded).not.toBeNull();
     expect(loaded!.issueNumber).toBe(42);
     expect(loaded!.command).toBe("fix-issue");
-    expect(loaded!.branch).toBe("flogvit-coder/fix-42");
+    expect(loaded!.branch).toBe("flogvit-pilot/fix-42");
     expect(loaded!.agentSummary).toContain("Started fixing");
     expect(loaded!.question).toContain("null values");
   });

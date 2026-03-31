@@ -8,7 +8,7 @@ describe("Logger", () => {
   let logDir: string;
 
   beforeEach(async () => {
-    logDir = await mkdtemp(join(tmpdir(), "flogvit-coder-log-"));
+    logDir = await mkdtemp(join(tmpdir(), "flogvit-pilot-log-"));
   });
 
   afterEach(async () => {
