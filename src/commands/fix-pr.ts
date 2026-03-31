@@ -41,8 +41,8 @@ export async function fixPR(
   failureContext?: string
 ): Promise<{ success: boolean }> {
   const homeDir = process.env.HOME ?? homedir();
-  const logDir = resolve(homeDir, ".flogvit-coder", "logs");
-  const stateDir = resolve(homeDir, ".flogvit-coder", "state");
+  const logDir = resolve(homeDir, ".flogvit-pilot", "logs");
+  const stateDir = resolve(homeDir, ".flogvit-pilot", "state");
   const repoContext = await gatherRepoContext(cwd);
   const repoName = basename(cwd);
   const logger = new Logger({ logDir, repoName, command: "fix-pr", verbose });
@@ -117,12 +117,13 @@ export async function fixPR(
   await logger.flush();
 
   const parsed = parseToolOutput(result.output);
-  const diffResult = await $`git status --porcelain`.cwd(wtPath).text();
-  const hasChanges = diffResult.trim().length > 0;
+  const diffResult = await $`git status --porcelain`.cwd(wtPath).nothrow().text();
+  const hasUncommitted = diffResult.trim().length > 0;
+  const commitsAhead = await $`git log origin/${pr.headBranch}..HEAD --oneline`.cwd(wtPath).nothrow().text();
+  const hasChanges = hasUncommitted || commitsAhead.trim().length > 0;
 
-  if (parsed.status === "stuck" || (!hasChanges && parsed.status !== "done")) {
+  if (parsed.status === "stuck") {
     await removeWorktree(wtPath, cwd).catch(() => {});
-
     await saveState(stateDir, repoName, issueNum, {
       ...(existingState ?? {
         issueNumber: issueNum,
@@ -135,7 +136,6 @@ export async function fixPR(
       }),
       prFixAttempts,
     });
-
     await removePRLabel(prNumber, LABELS.inProgress, cwd);
     process.off("SIGINT", cleanup);
     process.off("SIGTERM", cleanup);
@@ -144,19 +144,40 @@ export async function fixPR(
   }
 
   if (!hasChanges) {
-    await removeWorktree(wtPath, cwd);
+    // Agent says done but made no changes — still advance to avoid infinite loop
+    await removeWorktree(wtPath, cwd).catch(() => {});
+    await removePRLabel(prNumber, LABELS.inProgress, cwd);
+    await removePRLabel(prNumber, LABELS.changesRequested, cwd);
+    await removePRLabel(prNumber, LABELS.failed, cwd);
+    await addPRLabel(prNumber, LABELS.needsVerify, cwd);
+    process.off("SIGINT", cleanup);
+    process.off("SIGTERM", cleanup);
+    logger.summary(`PR #${prNumber}: no new changes — re-entering pipeline at needs-verify`);
+    return { success: true };
+  }
+
+  // Commit uncommitted changes (agent may have already committed)
+  if (hasUncommitted) {
+    await $`git add -A`.cwd(wtPath).nothrow();
+    await $`git restore --staged .claude/worktrees`.cwd(wtPath).nothrow();
+    await $`git restore --staged .cargo/config.toml`.cwd(wtPath).nothrow();
+    const commitResult = await $`git commit -m ${"fix-pr: address review feedback"}`.cwd(wtPath).nothrow();
+    if (commitResult.exitCode !== 0) {
+      logger.detail(`git commit failed: ${commitResult.stderr}`);
+    }
+  }
+
+  // Push explicitly to named branch — worktree is detached HEAD
+  const pushResult = await $`git push origin HEAD:${pr.headBranch} --force`.cwd(wtPath).nothrow();
+  if (pushResult.exitCode !== 0) {
+    logger.detail(`git push failed: ${pushResult.stderr}`);
+    await removeWorktree(wtPath, cwd).catch(() => {});
     await removePRLabel(prNumber, LABELS.inProgress, cwd);
     process.off("SIGINT", cleanup);
     process.off("SIGTERM", cleanup);
-    logger.summary(`PR #${prNumber}: no changes made`);
+    logger.summary(`PR #${prNumber}: git push failed`);
     return { success: false };
   }
-
-  // Commit and push to existing branch — PR updates automatically
-  await $`git add -A`.cwd(wtPath);
-  await $`git restore --staged .claude/worktrees`.cwd(wtPath).nothrow();
-  await $`git commit -m ${"fix-pr: address review feedback"}`.cwd(wtPath);
-  await $`git push`.cwd(wtPath);
 
   await removeWorktree(wtPath, cwd);
 
@@ -166,7 +187,8 @@ export async function fixPR(
   await removePRLabel(prNumber, LABELS.failed, cwd);
   await addPRLabel(prNumber, LABELS.needsVerify, cwd);
 
-  // Reset prFixAttempts since we succeeded
+  // Keep prFixAttempts accumulating — do NOT reset on success.
+  // This ensures the cap in watch.ts is a lifetime limit across all fix+review cycles.
   await saveState(stateDir, repoName, issueNum, {
     ...(existingState ?? {
       issueNumber: issueNum,
@@ -177,7 +199,7 @@ export async function fixPR(
       issueData: { title: issue.title, body: issue.body },
       createdAt: new Date().toISOString(),
     }),
-    prFixAttempts: 0,
+    prFixAttempts,
   });
 
   process.off("SIGINT", cleanup);
@@ -189,7 +211,7 @@ export async function fixPR(
 export async function run(args: string[], config: Config, cwd: string): Promise<void> {
   const prNumber = parseInt(args[0], 10);
   if (isNaN(prNumber)) {
-    console.error("Usage: flogvit-coder fix-pr <pr-number> [--model <model>] [--failure-context <text>]");
+    console.error("Usage: flogvit-pilot fix-pr <pr-number> [--model <model>] [--failure-context <text>]");
     process.exit(1);
   }
 
