@@ -138,14 +138,21 @@ If stuck: FLOGVIT-CODER:STUCK:<reason>`;
   const tool = getTool(toolName);
   const toolConfig = config.tools[toolName] ?? {};
 
-  const result = await tool.run({
-    prompt,
-    cwd: sourceRoot ?? targetCwd,
-    jobName: "supervisor",
-    fallbackApiKey: config.defaults.fallback_api_key,
-    maxTurns: 15, // supervisor should be decisive, not exhaustive
-    model: "claude-haiku-4-5", // start cheap — supervisor tasks are usually simple
-  });
+  let result: { output: string; success: boolean };
+  try {
+    result = await tool.run({
+      prompt,
+      cwd: sourceRoot ?? targetCwd,
+      jobName: "supervisor",
+      fallbackApiKey: config.defaults.fallback_api_key,
+      maxTurns: 15,
+      model: "claude-haiku-4-5",
+    });
+  } catch (err) {
+    const msg = String(err);
+    // Max-turns / timeout is a soft failure — log it and move on
+    return { success: false, summary: `STUCK: ${msg.slice(0, 80)}` };
+  }
 
   // If self-improve and source changed — verify and commit
   if (selfImprove && sourceRoot) {

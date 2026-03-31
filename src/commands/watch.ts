@@ -237,6 +237,7 @@ interface SupervisorStatus {
   lastScanAt: number | null;
   lastSummary: string | null;
   running: boolean;
+  cooldownUntil: number;
 }
 const supervisorStatus: SupervisorStatus = {
   enabled: false,
@@ -244,6 +245,7 @@ const supervisorStatus: SupervisorStatus = {
   lastScanAt: null,
   lastSummary: null,
   running: false,
+  cooldownUntil: 0,
 };
 
 function log(jobName: string, msg: string) {
@@ -252,7 +254,7 @@ function log(jobName: string, msg: string) {
   if (recentLogs.length > MAX_LOGS) recentLogs.shift();
 }
 
-function renderUI(repoName: string, queue: { stage: string; prTitle: string; prNumber: number }[]) {
+function renderUI(repoName: string, queue: { stage: string; title: string; number: number; kind: "issue" | "pr" }[]) {
   const now = Date.now();
   console.clear();
   console.log(
@@ -273,9 +275,12 @@ function renderUI(repoName: string, queue: { stage: string; prTitle: string; prN
   }
 
   if (queue.length > 0) {
-    console.log("QUEUE");
-    for (const item of queue) {
-      console.log(`  → ${item.stage.padEnd(14)} PR #${item.prNumber}   ${item.prTitle}`);
+    const shown = Math.min(queue.length, 10);
+    const header = queue.length > 10 ? `QUEUE  (${shown} of ${queue.length})` : `QUEUE  (${queue.length})`;
+    console.log(header);
+    for (const item of queue.slice(0, shown)) {
+      const ref = `${item.kind === "pr" ? "PR" : "  "} #${String(item.number).padEnd(4)}`;
+      console.log(`  → ${item.stage.padEnd(12)} ${ref}  ${item.title}`);
     }
     console.log();
   }
@@ -309,10 +314,12 @@ async function watchLive(config: Config, cwd: string, opts: {
   const homeDir = process.env.HOME ?? homedir();
   const stateDir = resolve(homeDir, ".flogvit-pilot", "state");
 
-  let queue: { stage: string; prTitle: string; prNumber: number }[] = [];
+  let queue: { stage: string; title: string; number: number; kind: "issue" | "pr" }[] = [];
   let running = true;
   // Look back 1 hour on first scan to catch errors that predate this watch session
   let lastLogScanTime = Date.now() - 60 * 60 * 1000;
+  let lastSupervisorCompletedAt = 0;
+  const SUPERVISOR_COOLDOWN_MS = 5 * 60 * 1000; // don't re-run within 5 minutes of last completion
 
   // Resolve source root once for self-improve
   const sourceRoot = selfImprove ? (await findSourceRoot() ?? undefined) : undefined;
@@ -434,14 +441,12 @@ async function watchLive(config: Config, cwd: string, opts: {
       }
 
       // PIPELINE STAGES — highest priority among capped jobs (near completion)
-      const nextQueue: typeof queue = [];
       for (const stage of PIPELINE_STAGES) {
         for (const pr of prsByLabel(STAGE_LABELS[stage])) {
           if (activeJobs.size >= maxJobs) break;
           if (pr.labels.includes(LABELS.inProgress)) continue;
           const jobName = `${stage}-${pr.number}`;
           if (activeJobs.has(jobName)) continue;
-          nextQueue.push({ stage, prTitle: pr.title, prNumber: pr.number });
           activeJobs.set(jobName, { label: pr.title, startedAt: Date.now(), stage, model: jobModel(config, stage) });
           log(jobName, `starting ${stage} for PR #${pr.number}`);
           let stagePromise: Promise<{ success: boolean }> = Promise.resolve({ success: false });
@@ -457,7 +462,6 @@ async function watchLive(config: Config, cwd: string, opts: {
           }).catch((err) => onJobError(jobName, err));
         }
       }
-      queue = nextQueue;
 
       // FIX-PR — second priority: changes-requested PRs already in flight
       const retryPRs = allOpenPRs.filter((pr) =>
@@ -557,31 +561,64 @@ async function watchLive(config: Config, cwd: string, opts: {
           log(jobName, `done`);
         }).catch((err) => onJobError(jobName, err));
       }
+
+      // Rebuild queue: everything pending that isn't already running (capped at 50 for perf)
+      const pendingQueue: typeof queue = [];
+      for (const stage of PIPELINE_STAGES) {
+        for (const pr of prsByLabel(STAGE_LABELS[stage])) {
+          if (pr.labels.includes(LABELS.inProgress)) continue;
+          if (!activeJobs.has(`${stage}-${pr.number}`)) {
+            pendingQueue.push({ stage, title: pr.title, number: pr.number, kind: "pr" });
+          }
+        }
+      }
+      for (const pr of allOpenPRs.filter((p) => p.labels.includes(LABELS.changesRequested) || p.labels.includes(LABELS.failed))) {
+        if (!pr.labels.includes(LABELS.inProgress) && !pr.labels.includes(LABELS.approved) && !activeJobs.has(`fix-pr-${pr.number}`)) {
+          pendingQueue.push({ stage: "fix-pr", title: pr.title, number: pr.number, kind: "pr" });
+        }
+      }
+      for (const issue of sortByPriority(byLabel(LABELS.needsPlan))) {
+        if (!inProgressNums.has(issue.number) && !issue.labels.includes(LABELS.blocked) && !activeJobs.has(`plan-${issue.number}`)) {
+          pendingQueue.push({ stage: "plan", title: issue.title, number: issue.number, kind: "issue" });
+        }
+      }
+      for (const issue of sortByPriority(byLabel(LABELS.autofix))) {
+        if (!inProgressNums.has(issue.number) && !issue.labels.includes(LABELS.blocked) && !activeJobs.has(`fix-${issue.number}`)) {
+          pendingQueue.push({ stage: "fix", title: issue.title, number: issue.number, kind: "issue" });
+        }
+      }
+      queue = pendingQueue.slice(0, 50);
     } catch (err) {
       log("poll", `error: ${String(err).slice(0, 80)}`);
     }
 
     // Supervisor: scan new error logs after each poll cycle
     if ((supervisor || selfImprove) && !supervisorStatus.running) {
+      const cooldownRemaining = SUPERVISOR_COOLDOWN_MS - (pollStart - lastSupervisorCompletedAt);
       const since = lastLogScanTime;
       lastLogScanTime = pollStart;
       supervisorStatus.lastScanAt = pollStart;
-      const errors = await scanNewErrorLogs(since).catch(() => []);
-      if (errors.length > 0) {
-        supervisorStatus.running = true;
-        activeJobs.set("supervisor", { label: `${errors.length} error(s) in logs`, startedAt: Date.now(), stage: "supervisor", model: "haiku" });
-        log("supervisor", `found ${errors.length} new error log(s)`);
-        runSupervisor({ targetCwd: cwd, errors, config, selfImprove, sourceRoot }).then(({ summary }) => {
-          activeJobs.delete("supervisor");
-          supervisorStatus.running = false;
-          supervisorStatus.lastSummary = summary;
-          log("supervisor", summary);
-        }).catch((err) => {
-          activeJobs.delete("supervisor");
-          supervisorStatus.running = false;
-          supervisorStatus.lastSummary = `error: ${String(err).slice(0, 50)}`;
-          log("supervisor", `error: ${String(err).slice(0, 60)}`);
-        });
+
+      if (cooldownRemaining <= 0) {
+        const errors = await scanNewErrorLogs(since).catch(() => []);
+        if (errors.length > 0) {
+          supervisorStatus.running = true;
+          activeJobs.set("supervisor", { label: `${errors.length} error(s) in logs`, startedAt: Date.now(), stage: "supervisor", model: "haiku" });
+          log("supervisor", `found ${errors.length} new error log(s)`);
+          runSupervisor({ targetCwd: cwd, errors, config, selfImprove, sourceRoot }).then(({ summary }) => {
+            activeJobs.delete("supervisor");
+            supervisorStatus.running = false;
+            supervisorStatus.lastSummary = summary;
+            lastSupervisorCompletedAt = Date.now();
+            log("supervisor", summary);
+          }).catch((err) => {
+            activeJobs.delete("supervisor");
+            supervisorStatus.running = false;
+            supervisorStatus.lastSummary = `error: ${String(err).slice(0, 50)}`;
+            lastSupervisorCompletedAt = Date.now();
+            log("supervisor", `error: ${String(err).slice(0, 60)}`);
+          });
+        }
       }
     }
   };
