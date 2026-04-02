@@ -737,7 +737,7 @@ async function watchLive(config: Config, cwd: string, opts: {
 
       if (cooldownRemaining <= 0) {
         // logOffsets is updated in place by scanNewErrorLogs — offsets advance even for non-error content
-        const errors = await scanNewErrorLogs(since, logOffsets).catch(() => []);
+        const errors = await scanNewErrorLogs(since, logOffsets, repoName).catch(() => []);
         if (errors.length === 0) {
           supervisorStatus.lastSummary = null;
         } else {
@@ -766,7 +766,7 @@ async function watchLive(config: Config, cwd: string, opts: {
 
   // On startup, seed log offsets to current EOF so the first scan only sees new content
   if (supervisor || selfImprove) {
-    await initLogOffsets(logOffsets);
+    await initLogOffsets(logOffsets, repoName);
     log("startup", "log offsets initialised");
   }
 

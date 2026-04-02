@@ -48,11 +48,11 @@ export interface LogError {
  * Pre-seed logOffsets with the current end-of-file positions for all existing log files.
  * Call this on startup so the first scan only picks up content written after the watch begins.
  */
-export async function initLogOffsets(offsets: Map<string, number>): Promise<void> {
+export async function initLogOffsets(offsets: Map<string, number>, repoName?: string): Promise<void> {
   const homeDir = process.env.HOME ?? homedir();
   const logBase = resolve(homeDir, ".flogvit-pilot", "logs");
 
-  const repos = await readdir(logBase).catch(() => [] as string[]);
+  const repos = repoName ? [repoName] : await readdir(logBase).catch(() => [] as string[]);
   for (const repo of repos) {
     if (repo === "active") continue;
     const repoDir = resolve(logBase, repo);
@@ -74,13 +74,14 @@ export async function initLogOffsets(offsets: Map<string, number>): Promise<void
  */
 export async function scanNewErrorLogs(
   since: number,
-  seenOffsets: Map<string, number>
+  seenOffsets: Map<string, number>,
+  repoName?: string
 ): Promise<LogError[]> {
   const homeDir = process.env.HOME ?? homedir();
   const logBase = resolve(homeDir, ".flogvit-pilot", "logs");
   const errors: LogError[] = [];
 
-  const repos = await readdir(logBase).catch(() => [] as string[]);
+  const repos = repoName ? [repoName] : await readdir(logBase).catch(() => [] as string[]);
   for (const repo of repos) {
     if (repo === "active") continue;
     const repoDir = resolve(logBase, repo);
