@@ -95,6 +95,13 @@ export async function fixPR(
 
   await createWorktreeFromRemote(wtPath, pr.headBranch, cwd);
 
+  // If there are merge conflicts, try rebasing against base branch before running agent
+  const rebaseResult = await $`git rebase origin/${pr.baseBranch}`.cwd(wtPath).nothrow().text();
+  if (rebaseResult.includes("CONFLICT")) {
+    await $`git rebase --abort`.cwd(wtPath).nothrow();
+    // Agent will handle the rebase with full context from the template
+  }
+
   const toolName = resolveToolForCommand(config, "fix-pr");
   const tool = getTool(toolName);
   const toolConfig = config.tools[toolName] ?? {};

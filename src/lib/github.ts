@@ -232,7 +232,7 @@ export async function getPRDiff(prNumber: number, cwd: string): Promise<string> 
 }
 
 export async function findPRByBranch(branch: string, cwd: string): Promise<PR | null> {
-  const result = await $`gh pr list --head ${branch} --state open --json number,title,headRefName,labels,body`.cwd(cwd).nothrow().text();
+  const result = await $`gh pr list --head ${branch} --state open --json number,title,headRefName,baseRefName,labels,body`.cwd(cwd).nothrow().text();
   if (!result.trim()) return null;
   const data = JSON.parse(result);
   if (!Array.isArray(data) || data.length === 0) return null;
@@ -241,6 +241,7 @@ export async function findPRByBranch(branch: string, cwd: string): Promise<PR | 
     number: pr.number,
     title: pr.title,
     headBranch: pr.headRefName,
+    baseBranch: pr.baseRefName ?? "main",
     labels: pr.labels?.map((l: { name: string }) => l.name) ?? [],
     body: pr.body ?? "",
   };
