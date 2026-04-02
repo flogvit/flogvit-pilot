@@ -186,6 +186,11 @@ If stuck: FLOGVIT-PILOT:STUCK:<reason>`;
   const ollamaConfig = config.tools.ollama;
   const ollamaModel = ollamaConfig?.model as string | undefined;
 
+  // Snapshot modified files before agent runs, so we can distinguish agent changes from user changes
+  const preRunDirty = selfImprove && sourceRoot
+    ? new Set((await $`git status --porcelain`.cwd(sourceRoot).nothrow().text()).trim().split("\n").map((l) => l.slice(3)).filter(Boolean))
+    : new Set<string>();
+
   let result: { output: string; success: boolean };
   try {
     result = await tool.run({
@@ -204,20 +209,32 @@ If stuck: FLOGVIT-PILOT:STUCK:<reason>`;
     return { success: false, summary: `STUCK: ${msg.slice(0, 80)}` };
   }
 
-  // If self-improve and source changed — verify and commit
+  // If self-improve and source changed — verify and commit only files the agent modified
   let selfImproveSuffix = "";
   if (selfImprove && sourceRoot) {
-    const changed = await $`git status --porcelain`.cwd(sourceRoot).nothrow().text();
-    if (changed.trim()) {
+    const postRun = await $`git status --porcelain`.cwd(sourceRoot).nothrow().text();
+    const postRunFiles = postRun.trim().split("\n").map((l) => l.slice(3)).filter(Boolean);
+
+    // Only consider files that are NEW in the diff (not already dirty before the agent ran)
+    const agentFiles = postRunFiles.filter((f) => !preRunDirty.has(f));
+
+    if (agentFiles.length > 0) {
       const tsc = await $`bun tsc --noEmit`.cwd(sourceRoot).nothrow();
       if (tsc.exitCode !== 0) {
-        await $`git checkout -- .`.cwd(sourceRoot).nothrow();
+        for (const file of agentFiles) {
+          await $`git checkout -- ${file}`.cwd(sourceRoot).nothrow();
+        }
         selfImproveSuffix = " [self-improve: reverted — tsc errors]";
       } else {
-        await $`git add -u`.cwd(sourceRoot).nothrow();
-        const files = changed.trim().split("\n").map((l) => l.trim().split(" ").pop()).join(", ");
-        await $`git commit -m ${"supervisor: auto-fix from log analysis"}`.cwd(sourceRoot).nothrow();
-        selfImproveSuffix = ` [self-improve: committed ${files}]`;
+        for (const file of agentFiles) {
+          await $`git add ${file}`.cwd(sourceRoot).nothrow();
+        }
+        const staged = await $`git diff --cached --name-only`.cwd(sourceRoot).nothrow().text();
+        if (staged.trim()) {
+          const files = staged.trim().split("\n").join(", ");
+          await $`git commit -m ${"supervisor: auto-fix from log analysis"}`.cwd(sourceRoot).nothrow();
+          selfImproveSuffix = ` [self-improve: committed ${files}]`;
+        }
       }
     }
   }
