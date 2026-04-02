@@ -4,7 +4,8 @@ import { homedir } from "os";
 import { readdir, rm } from "fs/promises";
 import type { Config } from "../lib/config";
 import { resolveToolForCommand, resolveMaxConcurrentJobs, resolveWatchConfig } from "../lib/config";
-import { listOpenIssues, listOpenPRs, getIssue, removeLabel, addLabel, addPRLabel, removePRLabel, parseDependsOn, LABELS } from "../lib/github";
+import { listOpenIssues, listOpenPRs, getIssue, removeLabel, addLabel, addPRLabel, removePRLabel, parseDependsOn, listMilestones, LABELS } from "../lib/github";
+import type { MilestoneInfo } from "../lib/github";
 import { loadState, saveState } from "../lib/state";
 import { triageIssue } from "./triage";
 import { planIssue } from "./plan-issue";
@@ -276,7 +277,12 @@ function log(jobName: string, msg: string) {
   if (recentLogs.length > MAX_LOGS) recentLogs.shift();
 }
 
-function renderUI(repoName: string, queue: { stage: string; title: string; number: number; kind: "issue" | "pr" }[]) {
+function renderUI(
+  repoName: string,
+  queue: { stage: string; title: string; number: number; kind: "issue" | "pr"; blocked?: string }[],
+  milestones: MilestoneInfo[] = [],
+  waiting: { number: number; title: string; kind: "issue" | "pr" }[] = [],
+) {
   const now = Date.now();
   console.clear();
   console.log(
@@ -302,8 +308,32 @@ function renderUI(repoName: string, queue: { stage: string; title: string; numbe
     console.log(header);
     for (const item of queue.slice(0, shown)) {
       const ref = `${item.kind === "pr" ? "PR" : "  "} #${String(item.number).padEnd(4)}`;
-      console.log(`  → ${item.stage.padEnd(12)} ${ref}  ${item.title}`);
+      const suffix = item.blocked ? `  [blocked by ${item.blocked}]` : "";
+      console.log(`  → ${item.stage.padEnd(12)} ${ref}  ${item.title}${suffix}`);
     }
+    console.log();
+  }
+
+  if (milestones.length > 0) {
+    console.log("MILESTONES");
+    for (const ms of milestones) {
+      const total = ms.openIssues + ms.closedIssues;
+      const pct = total > 0 ? Math.round((ms.closedIssues / total) * 100) : 0;
+      const bar = total > 0
+        ? "█".repeat(Math.round(pct / 5)) + "░".repeat(20 - Math.round(pct / 5))
+        : "░".repeat(20);
+      console.log(`  ${bar} ${String(pct).padStart(3)}%  ${ms.title}  (${ms.closedIssues}/${total})`);
+    }
+    console.log();
+  }
+
+  if (waiting.length > 0) {
+    console.log(`WAITING FOR INPUT  (${waiting.length})`);
+    for (const item of waiting.slice(0, 5)) {
+      const ref = `${item.kind === "pr" ? "PR" : "  "} #${String(item.number).padEnd(4)}`;
+      console.log(`  ⏸ ${ref}  ${item.title}`);
+    }
+    if (waiting.length > 5) console.log(`  ... and ${waiting.length - 5} more`);
     console.log();
   }
 
@@ -338,7 +368,9 @@ async function watchLive(config: Config, cwd: string, opts: {
   const homeDir = process.env.HOME ?? homedir();
   const stateDir = resolve(homeDir, ".flogvit-pilot", "state");
 
-  let queue: { stage: string; title: string; number: number; kind: "issue" | "pr" }[] = [];
+  let queue: { stage: string; title: string; number: number; kind: "issue" | "pr"; blocked?: string }[] = [];
+  let cachedMilestones: MilestoneInfo[] = [];
+  let waitingItems: { number: number; title: string; kind: "issue" | "pr" }[] = [];
   let running = true;
   let lastLogScanTime = Date.now();
   let lastSupervisorCompletedAt = 0;
@@ -388,7 +420,7 @@ async function watchLive(config: Config, cwd: string, opts: {
 
   // Re-render UI every second
   const uiInterval = setInterval(() => {
-    renderUI(repoName, queue);
+    renderUI(repoName, queue, cachedMilestones, waitingItems);
   }, 1000);
 
   const poll = async () => {
@@ -665,21 +697,33 @@ async function watchLive(config: Config, cwd: string, opts: {
         }
       }
       for (const issue of sortByPriority(byLabel(LABELS.needsSplit))) {
-        if (!inProgressNums.has(issue.number) && !issue.labels.includes(LABELS.blocked) && !activeJobs.has(`split-${issue.number}`)) {
-          pendingQueue.push({ stage: "split", title: issue.title, number: issue.number, kind: "issue" });
+        if (!inProgressNums.has(issue.number) && !activeJobs.has(`split-${issue.number}`)) {
+          const deps = checkDeps(issue.body, openIssueNums);
+          pendingQueue.push({ stage: "split", title: issue.title, number: issue.number, kind: "issue", blocked: deps.length > 0 ? `#${deps.join(", #")}` : undefined });
         }
       }
       for (const issue of sortByPriority(byLabel(LABELS.needsPlan))) {
-        if (!inProgressNums.has(issue.number) && !issue.labels.includes(LABELS.blocked) && !activeJobs.has(`plan-${issue.number}`)) {
-          pendingQueue.push({ stage: "plan", title: issue.title, number: issue.number, kind: "issue" });
+        if (!inProgressNums.has(issue.number) && !activeJobs.has(`plan-${issue.number}`)) {
+          const deps = checkDeps(issue.body, openIssueNums);
+          pendingQueue.push({ stage: "plan", title: issue.title, number: issue.number, kind: "issue", blocked: deps.length > 0 ? `#${deps.join(", #")}` : undefined });
         }
       }
       for (const issue of sortByPriority(byLabel(LABELS.autofix))) {
-        if (!inProgressNums.has(issue.number) && !issue.labels.includes(LABELS.blocked) && !activeJobs.has(`fix-${issue.number}`)) {
-          pendingQueue.push({ stage: "fix", title: issue.title, number: issue.number, kind: "issue" });
+        if (!inProgressNums.has(issue.number) && !activeJobs.has(`fix-${issue.number}`)) {
+          const deps = checkDeps(issue.body, openIssueNums);
+          pendingQueue.push({ stage: "fix", title: issue.title, number: issue.number, kind: "issue", blocked: deps.length > 0 ? `#${deps.join(", #")}` : undefined });
         }
       }
       queue = pendingQueue.slice(0, 50);
+
+      // Update waiting items for UI
+      waitingItems = [
+        ...allOpenIssues.filter((i) => i.labels.includes(LABELS.waiting)).map((i) => ({ number: i.number, title: i.title, kind: "issue" as const })),
+        ...allOpenPRs.filter((p) => p.labels.includes(LABELS.waiting)).map((p) => ({ number: p.number, title: p.title, kind: "pr" as const })),
+      ];
+
+      // Update milestones for UI (don't block on failure)
+      listMilestones(cwd).then((ms) => { cachedMilestones = ms; }).catch(() => {});
     } catch (err) {
       log("poll", `error: ${String(err).slice(0, 80)}`);
     }

@@ -41,6 +41,7 @@ const COMMANDS: Record<string, () => Promise<CommandModule>> = {
   work: () => import("./commands/work"),
   tail: () => import("./commands/tail"),
   develop: () => import("./commands/develop"),
+  kickoff: () => import("./commands/kickoff"),
 };
 
 function parseGlobalFlags(argv: string[]): {
@@ -115,6 +116,7 @@ Commands:
   work <#>            Interactive Claude Code session on an issue
   tail [#]            Live-stream output of a running background job
   develop             Analyse recent logs and self-fix bugs (requires bun link)
+  kickoff <desc>      Plan a project → milestones + issues (--auto for unattended)
 
 Options:
   --tool <name>       Override AI tool (claude, aider)
@@ -137,6 +139,7 @@ Options:
     "fix-issue", "fix-issues", "watch", "review", "audit", "implement",
     "verify", "triage", "split-issue", "plan-issue", "fix-pr", "review-pr",
     "audit-pr", "pr-review", "merge", "add-issue", "work", "develop", "init",
+    "kickoff",
   ]);
 
   if (NEEDS_GH.has(command)) {
@@ -147,6 +150,7 @@ Options:
   const NEEDS_LABELS = new Set([
     "fix-issue", "fix-issues", "watch", "triage", "split-issue", "plan-issue",
     "fix-pr", "review-pr", "audit-pr", "merge", "add-issue", "develop",
+    "kickoff",
   ]);
 
   const cwd = process.cwd();

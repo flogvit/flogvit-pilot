@@ -42,6 +42,7 @@ flogvit-pilot <command> [options]
 | `add-issue <title> [body]` | Create a GitHub issue with optional label flags |
 | `import-plan <file>` | Import a plan file as GitHub issues under a milestone |
 | `develop` | One-shot supervisor: scan error logs and take action |
+| `kickoff <desc>` | Plan a full project → milestones + issues from a description |
 
 #### Interactive
 
@@ -108,6 +109,30 @@ flogvit-pilot tail      # List all active jobs
 flogvit-pilot tail 18   # Stream output of the job working on issue #18
 ```
 
+### `kickoff`
+
+Takes a high-level project description, analyses the codebase, and creates a phased plan with GitHub milestones and issues:
+
+```bash
+# Manual mode — creates issues with needs-triage, you review before starting
+flogvit-pilot kickoff "Build a REST API with user auth, CRUD endpoints, and rate limiting"
+
+# Auto mode — creates issues with autofix, watch picks them up immediately
+flogvit-pilot kickoff --auto "Add dark mode support with system preference detection"
+```
+
+The AI will:
+1. Analyse the repo and understand existing patterns
+2. Generate a phased plan with milestones
+3. Self-review the plan for gaps and ordering issues
+4. Create a parent tracking issue, milestones, and sub-issues with proper dependencies
+
+### Milestones
+
+`kickoff` and `import-plan` create GitHub milestones to group related issues into phases. Milestones provide progress tracking in GitHub — you can see completion percentage per phase.
+
+Issues within a milestone can have `Depends-On: #N` to control execution order. Cross-milestone dependencies are implicit: all issues in phase N+1 wait for phase N to complete.
+
 ### Label state machine
 
 `watch` drives issues and PRs through a pipeline via GitHub labels:
@@ -148,28 +173,37 @@ Labels used (all prefixed `flogvit-pilot:`):
 
 ## Configuration
 
-TOML config loaded from `.flogvit-pilot/config.toml` (repo) or `~/.flogvit-pilot/config.toml` (global).
+TOML config loaded from `.flogvit-pilot/config.toml` (repo) or `~/.flogvit-pilot/config.toml` (global). A default global config is created automatically on first run.
 
 ```toml
 [defaults]
 tool = "claude"
-max_concurrent_jobs = 3          # max parallel jobs in watch (default: 3)
-fallback_api_key = "sk-ant-..."  # used on rate limit if set
+max_concurrent_jobs = 3
+# fallback_api_key = "sk-ant-..."  # used on rate limit if set
 
 [tools.claude]
+model = "claude-opus-4-6[1m]"
 max-turns = 50
-model = "claude-sonnet-4-6"
 allowed-tools = ["Bash", "Read", "Edit", "Write", "Glob", "Grep"]
 
-[tools.aider]
-model = "claude-sonnet-4-6"
-
-[commands.fix-issue]
-tool = "claude"
-model = "claude-sonnet-4-6"
-
+# Per-command overrides
 [commands.triage]
-max-turns = 5
+max_turns = 5
+
+[commands.plan-issue]
+max_turns = 20
+
+# Watch / live mode settings
+[watch]
+poll_interval_s = 60           # seconds between polls
+supervisor_cooldown_s = 300    # seconds between supervisor runs
+max_fix_attempts = 3           # max retries for fix-issue
+max_pr_fix_attempts = 3        # max retries for fix-pr
+# retry_model = "opus"         # model override for retries (default: use tools.claude.model)
+
+# Rate limit retry delays (minutes)
+[rate_limit]
+retry_delays_m = [5, 10, 20]
 ```
 
 ## Development

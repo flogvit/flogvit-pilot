@@ -293,6 +293,30 @@ export async function findMilestone(title: string, cwd: string): Promise<number 
   return found?.number ?? null;
 }
 
+export interface MilestoneInfo {
+  number: number;
+  title: string;
+  openIssues: number;
+  closedIssues: number;
+}
+
+export async function listMilestones(cwd: string): Promise<MilestoneInfo[]> {
+  const slug = await getRepoSlug(cwd);
+  const result = await $`gh api repos/${slug}/milestones --method GET -f state=open`.cwd(cwd).nothrow().text();
+  if (!result.trim()) return [];
+  try {
+    const data = JSON.parse(result) as { number: number; title: string; open_issues: number; closed_issues: number }[];
+    return data.map((m) => ({
+      number: m.number,
+      title: m.title,
+      openIssues: m.open_issues,
+      closedIssues: m.closed_issues,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export async function createPullRequest(
   opts: { title: string; body: string; base?: string; head?: string },
   cwd: string
