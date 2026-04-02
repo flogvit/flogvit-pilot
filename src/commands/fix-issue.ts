@@ -70,7 +70,9 @@ export async function fixIssue(
   const stateDir = resolve(homeDir, ".flogvit-pilot", "state");
   const repoContext = await gatherRepoContext(cwd);
   const logger = new Logger({ logDir, repoName: repoContext.repoName, command: "fix-issue", verbose });
+  let activeMarker: string | null = null;
 
+  try {
   // Load existing state to track attempt count across retries
   const existingFixState = await loadState(stateDir, repoContext.repoName, issueNum);
   const fixAttempts = (existingFixState?.fixAttempts ?? 0) + 1;
@@ -125,12 +127,11 @@ export async function fixIssue(
 
   // Write active job marker so `flogvit-pilot tail` can find this log
   const activeDir = resolve(logDir, repoContext.repoName, "active");
-  const activeMarker = resolve(activeDir, `fix-${issueNum}`);
+  activeMarker = resolve(activeDir, `fix-${issueNum}`);
   await mkdir(activeDir, { recursive: true });
   await writeFile(activeMarker, agentLogFile);
 
   let result: Awaited<ReturnType<typeof tool.run>>;
-  try {
   try {
     result = await tool.run({
       prompt,
@@ -166,7 +167,6 @@ export async function fixIssue(
   }
 
   logger.detail(result.output);
-  await logger.flush();
 
   const parsed = parseToolOutput(result.output);
 
@@ -261,7 +261,6 @@ export async function fixIssue(
     process.off("SIGINT", cleanup);
     process.off("SIGTERM", cleanup);
     logger.summary(`Issue #${issueNum}: git push failed`);
-    await logger.flush();
     return { success: false };
   }
 
@@ -308,8 +307,12 @@ export async function fixIssue(
 
   logger.summary(`Issue #${issueNum}: PR created — ${prUrl}`);
   return { success: true, prUrl };
+  } catch (err) {
+    logger.error(`fix-issue crashed: ${String(err).slice(0, 200)}`);
+    throw err;
   } finally {
-    await unlink(activeMarker).catch(() => {});
+    await logger.flush();
+    if (activeMarker) await unlink(activeMarker).catch(() => {});
   }
 }
 

@@ -30,6 +30,7 @@ export async function auditPR(
   const repoName = basename(cwd);
   const logger = new Logger({ logDir, repoName, command: "audit-pr", verbose });
 
+  try {
   const diff = await getPRDiff(prNumber, cwd);
   const repoContext = await gatherRepoContext(cwd);
 
@@ -74,7 +75,6 @@ export async function auditPR(
   });
 
   logger.detail(result.output);
-  await logger.flush();
 
   process.off("SIGINT", cleanup);
   process.off("SIGTERM", cleanup);
@@ -109,6 +109,12 @@ export async function auditPR(
   logger.summary(`PR #${prNumber}: audit produced no clear verdict`);
   await addPRLabel(prNumber, LABELS.needsAudit, cwd);
   return { success: false };
+  } catch (err) {
+    logger.error(`audit-pr crashed: ${String(err).slice(0, 200)}`);
+    throw err;
+  } finally {
+    await logger.flush();
+  }
 }
 
 export async function run(args: string[], config: Config, cwd: string): Promise<void> {

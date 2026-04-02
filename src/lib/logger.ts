@@ -13,20 +13,22 @@ export class Logger {
   private summaries: string[] = [];
   private buffer: string[] = [];
   private options: LoggerOptions;
+  private dirReady: Promise<void>;
+  private flushInFlight: Promise<void> = Promise.resolve();
 
   constructor(options: LoggerOptions) {
     this.options = options;
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    this.logFile = join(
-      options.logDir,
-      options.repoName,
-      `${timestamp}-${options.command}.log`
-    );
+    const dir = join(options.logDir, options.repoName);
+    this.logFile = join(dir, `${timestamp}-${options.command}.log`);
+    this.dirReady = mkdir(dir, { recursive: true }).then(() => {});
   }
 
   summary(message: string): void {
     this.summaries.push(message);
+    this.buffer.push(message);
     console.log(message);
+    this.scheduleFlush();
   }
 
   detail(message: string): void {
@@ -39,6 +41,7 @@ export class Logger {
   error(message: string): void {
     this.buffer.push(`[ERROR] ${message}`);
     console.error(message);
+    this.scheduleFlush();
   }
 
   getSummaries(): string[] {
@@ -49,15 +52,22 @@ export class Logger {
     return this.logFile;
   }
 
-  async flush(): Promise<void> {
-    if (this.buffer.length === 0) return;
+  /** Fire-and-forget flush — errors are swallowed so callers don't need to await. */
+  private scheduleFlush(): void {
+    this.flushInFlight = this.flushInFlight.then(() => this.drainBuffer()).catch(() => {});
+  }
 
-    const dir = join(
-      this.options.logDir,
-      this.options.repoName
-    );
-    await mkdir(dir, { recursive: true });
-    await appendFile(this.logFile, this.buffer.join("\n") + "\n");
+  private async drainBuffer(): Promise<void> {
+    if (this.buffer.length === 0) return;
+    const lines = this.buffer;
     this.buffer = [];
+    await this.dirReady;
+    await appendFile(this.logFile, lines.join("\n") + "\n");
+  }
+
+  async flush(): Promise<void> {
+    // Wait for any scheduled flush, then drain whatever is left
+    await this.flushInFlight;
+    await this.drainBuffer();
   }
 }

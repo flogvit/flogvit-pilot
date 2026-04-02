@@ -1,5 +1,29 @@
 import { $ } from "bun";
 
+/**
+ * Verify that required external tools are available and authenticated.
+ * Call this before any command that uses `gh`.
+ */
+export async function checkPrerequisites(): Promise<void> {
+  // Check gh CLI is installed
+  try {
+    await $`which gh`.quiet();
+  } catch {
+    console.error("Error: GitHub CLI (gh) is not installed.");
+    console.error("Install it: https://cli.github.com/");
+    process.exit(1);
+  }
+
+  // Check gh is authenticated
+  try {
+    await $`gh auth status`.quiet();
+  } catch {
+    console.error("Error: GitHub CLI is not authenticated.");
+    console.error("Run: gh auth login");
+    process.exit(1);
+  }
+}
+
 export const LABELS = {
   autofix: "autofix",
   autoImplement: "auto-implement",

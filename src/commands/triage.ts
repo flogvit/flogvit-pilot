@@ -59,6 +59,7 @@ export async function triageIssue(
   const logger = new Logger({ logDir, repoName: basename(cwd), command: "triage", verbose: false });
   const repoName = basename(cwd);
 
+  try {
   const existingState = await loadState(stateDir, repoName, issueNum);
   const triageCount = (existingState?.triageCount ?? 0) + 1;
 
@@ -120,7 +121,6 @@ export async function triageIssue(
   });
 
   logger.detail(`Triage output for #${issueNum}:\n${result.output}`);
-  await logger.flush();
 
   const parsed = parseTriageOutput(result.output);
 
@@ -165,6 +165,12 @@ export async function triageIssue(
   await addLabel(issueNum, LABELS.waiting, cwd);
   await commentOnIssue(issueNum, formatIssueComment("waiting", reason), cwd);
   return { verdict: "waiting" };
+  } catch (err) {
+    logger.error(`triage crashed: ${String(err).slice(0, 200)}`);
+    throw err;
+  } finally {
+    await logger.flush();
+  }
 }
 
 export async function run(args: string[], config: Config, cwd: string): Promise<void> {

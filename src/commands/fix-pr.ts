@@ -48,6 +48,7 @@ export async function fixPR(
   const repoName = basename(cwd);
   const logger = new Logger({ logDir, repoName, command: "fix-pr", verbose });
 
+  try {
   const pr = await getPR(prNumber, cwd);
   const issueNum = parsePRIssueNumber(pr.body);
   if (!issueNum) {
@@ -115,7 +116,6 @@ export async function fixPR(
   });
 
   logger.detail(result.output);
-  await logger.flush();
 
   const parsed = parseToolOutput(result.output);
   const diffResult = await $`git status --porcelain`.cwd(wtPath).nothrow().text();
@@ -205,6 +205,12 @@ export async function fixPR(
   process.off("SIGTERM", cleanup);
   logger.summary(`PR #${prNumber}: fixed and pushed — pipeline restarted`);
   return { success: true };
+  } catch (err) {
+    logger.error(`fix-pr crashed: ${String(err).slice(0, 200)}`);
+    throw err;
+  } finally {
+    await logger.flush();
+  }
 }
 
 export async function run(args: string[], config: Config, cwd: string): Promise<void> {

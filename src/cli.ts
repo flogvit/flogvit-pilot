@@ -6,6 +6,7 @@ import "./lib/tools/aider";
 
 import { resolveConfig } from "./lib/config";
 import type { Config } from "./lib/config";
+import { checkPrerequisites } from "./lib/github";
 
 interface CommandModule {
   run(args: string[], config: Config, cwd: string): Promise<void>;
@@ -129,6 +130,17 @@ Options:
     console.error(`Unknown command: ${command}`);
     console.error(`Run 'flogvit-pilot --help' for available commands.`);
     process.exit(1);
+  }
+
+  // Commands that require gh CLI authentication
+  const NEEDS_GH = new Set([
+    "fix-issue", "fix-issues", "watch", "review", "audit", "implement",
+    "verify", "triage", "split-issue", "plan-issue", "fix-pr", "review-pr",
+    "audit-pr", "pr-review", "merge", "add-issue", "work", "develop", "init",
+  ]);
+
+  if (NEEDS_GH.has(command)) {
+    await checkPrerequisites();
   }
 
   const cwd = process.cwd();

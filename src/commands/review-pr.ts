@@ -30,6 +30,7 @@ export async function reviewPR(
   const repoName = basename(cwd);
   const logger = new Logger({ logDir, repoName, command: "review-pr", verbose });
 
+  try {
   const diff = await getPRDiff(prNumber, cwd);
   const repoContext = await gatherRepoContext(cwd);
 
@@ -74,7 +75,6 @@ export async function reviewPR(
   });
 
   logger.detail(result.output);
-  await logger.flush();
 
   process.off("SIGINT", cleanup);
   process.off("SIGTERM", cleanup);
@@ -109,6 +109,12 @@ export async function reviewPR(
   logger.summary(`PR #${prNumber}: review produced no clear verdict`);
   await addPRLabel(prNumber, LABELS.needsReview, cwd);
   return { success: false };
+  } catch (err) {
+    logger.error(`review-pr crashed: ${String(err).slice(0, 200)}`);
+    throw err;
+  } finally {
+    await logger.flush();
+  }
 }
 
 export async function run(args: string[], config: Config, cwd: string): Promise<void> {

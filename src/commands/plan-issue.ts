@@ -90,6 +90,7 @@ export async function planIssue(
   const logger = new Logger({ logDir, repoName, command: "plan-issue", verbose: false });
   const repoContext = await gatherRepoContext(cwd);
 
+  try {
   const existingState = await loadState(stateDir, repoName, issueNum);
 
   // Guard: if plan already generated, set waiting directly
@@ -226,7 +227,6 @@ export async function planIssue(
         );
       }
     }
-    await logger.flush();
     return { success: true };
   }
 
@@ -245,8 +245,13 @@ export async function planIssue(
     ),
     cwd
   );
-  await logger.flush();
   return { success: false };
+  } catch (err) {
+    logger.error(`plan-issue crashed: ${String(err).slice(0, 200)}`);
+    throw err;
+  } finally {
+    await logger.flush();
+  }
 }
 
 export async function run(args: string[], config: Config, cwd: string): Promise<void> {

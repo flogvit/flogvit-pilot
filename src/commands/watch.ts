@@ -344,14 +344,25 @@ async function watchLive(config: Config, cwd: string, opts: {
     log(jobName, `error: ${msg.slice(0, 60)}`);
   }
 
-  const cleanup = () => {
+  // Track in-flight job promises so we can await them on shutdown
+  const jobPromises = new Map<string, Promise<void>>();
+
+  const cleanup = async () => {
     running = false;
     console.clear();
-    console.log("flogvit-pilot: shutting down.");
+    console.log("flogvit-pilot: shutting down, waiting for jobs to flush logs...");
+    // Give in-flight jobs up to 5 seconds to flush their logs
+    const pending = [...jobPromises.values()];
+    if (pending.length > 0) {
+      await Promise.race([
+        Promise.allSettled(pending),
+        new Promise((r) => setTimeout(r, 5000)),
+      ]);
+    }
     process.exit(0);
   };
-  process.once("SIGINT", cleanup);
-  process.once("SIGTERM", cleanup);
+  process.once("SIGINT", () => { cleanup(); });
+  process.once("SIGTERM", () => { cleanup(); });
 
   // Re-render UI every second
   const uiInterval = setInterval(() => {
@@ -410,10 +421,11 @@ async function watchLive(config: Config, cwd: string, opts: {
         if (activeJobs.has(jobName)) continue;
         activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "triage", model: jobModel(config, "triage") });
         log(jobName, `triaging issue #${issue.number}`);
-        triageIssue(issue.number, config, cwd).then(() => {
+        const p = triageIssue(issue.number, config, cwd).then(() => {
           activeJobs.delete(jobName);
           log(jobName, `done`);
-        }).catch((err) => onJobError(jobName, err));
+        }).catch((err) => onJobError(jobName, err)).finally(() => jobPromises.delete(jobName));
+        jobPromises.set(jobName, p);
       }
 
       // Check waiting issues for human replies — exempt from cap, just resets label
@@ -431,7 +443,7 @@ async function watchLive(config: Config, cwd: string, opts: {
         if (activeJobs.has(jobName)) continue;
         activeJobs.set(jobName, { label: waitingIssue.title, startedAt: Date.now(), stage: "triage", model: jobModel(config, "triage") });
         log(jobName, `re-triaging answered issue #${num}`);
-        (async () => {
+        const p = (async () => {
           const existingState = await loadState(stateDir, repoName, num);
           if (existingState) {
             await saveState(stateDir, repoName, num, { ...existingState, triageCount: 0 });
@@ -441,7 +453,8 @@ async function watchLive(config: Config, cwd: string, opts: {
         })().then(() => {
           activeJobs.delete(jobName);
           log(jobName, `done`);
-        }).catch((err) => onJobError(jobName, err));
+        }).catch((err) => onJobError(jobName, err)).finally(() => jobPromises.delete(jobName));
+        jobPromises.set(jobName, p);
       }
 
       // PIPELINE STAGES — highest priority among capped jobs (near completion)
@@ -460,10 +473,11 @@ async function watchLive(config: Config, cwd: string, opts: {
             case "audit": stagePromise = auditPR(pr.number, config, cwd); break;
             case "merge": stagePromise = mergeRun([], config, cwd).then(() => ({ success: true })); break;
           }
-          stagePromise.then(({ success }) => {
+          const p = stagePromise.then(({ success }) => {
             activeJobs.delete(jobName);
             log(jobName, success ? `done` : `done (not advanced)`);
-          }).catch((err) => onJobError(jobName, err));
+          }).catch((err) => onJobError(jobName, err)).finally(() => jobPromises.delete(jobName));
+          jobPromises.set(jobName, p);
         }
       }
 
@@ -492,10 +506,11 @@ async function watchLive(config: Config, cwd: string, opts: {
         const model = prFixAttempts >= 1 ? "opus" : undefined;
         activeJobs.set(jobName, { label: pr.title, startedAt: Date.now(), stage: "fix-pr", model: jobModel(config, "fix-pr", model) });
         log(jobName, `fixing PR #${pr.number} (attempt ${prFixAttempts + 1})`);
-        fixPR(pr.number, config, cwd, false, model).then(() => {
+        const p = fixPR(pr.number, config, cwd, false, model).then(() => {
           activeJobs.delete(jobName);
           log(jobName, `done`);
-        }).catch((err) => onJobError(jobName, err));
+        }).catch((err) => onJobError(jobName, err)).finally(() => jobPromises.delete(jobName));
+        jobPromises.set(jobName, p);
       }
 
       // SPLIT — runs before plan; split-issue decides whether to split, pass through, or escalate to plan
@@ -518,10 +533,11 @@ async function watchLive(config: Config, cwd: string, opts: {
         if (activeJobs.has(jobName)) continue;
         activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "split", model: jobModel(config, "split-issue") });
         log(jobName, `splitting issue #${issue.number}`);
-        splitIssue(issue.number, config, cwd).then(() => {
+        const p = splitIssue(issue.number, config, cwd).then(() => {
           activeJobs.delete(jobName);
           log(jobName, `done`);
-        }).catch((err) => onJobError(jobName, err));
+        }).catch((err) => onJobError(jobName, err)).finally(() => jobPromises.delete(jobName));
+        jobPromises.set(jobName, p);
       }
 
       // PLAN + FIX — sorted by issue priority (bug > enhancement, high > medium > low)
@@ -544,10 +560,11 @@ async function watchLive(config: Config, cwd: string, opts: {
         if (activeJobs.has(jobName)) continue;
         activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "plan", model: jobModel(config, "plan-issue") });
         log(jobName, `planning issue #${issue.number}`);
-        planIssue(issue.number, config, cwd).then(() => {
+        const p = planIssue(issue.number, config, cwd).then(() => {
           activeJobs.delete(jobName);
           log(jobName, `done`);
-        }).catch((err) => onJobError(jobName, err));
+        }).catch((err) => onJobError(jobName, err)).finally(() => jobPromises.delete(jobName));
+        jobPromises.set(jobName, p);
       }
 
       for (const issue of sortByPriority(byLabel(LABELS.autofix))) {
@@ -586,10 +603,11 @@ async function watchLive(config: Config, cwd: string, opts: {
 
         activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "fix", model: jobModel(config, "fix-issue", retryModel) });
         log(jobName, retryModel ? `retrying fix for issue #${issue.number}` : `starting fix for issue #${issue.number}`);
-        fixIssue(issue.number, config, cwd, false, retryModel).then(() => {
+        const p = fixIssue(issue.number, config, cwd, false, retryModel).then(() => {
           activeJobs.delete(jobName);
           log(jobName, `done`);
-        }).catch((err) => onJobError(jobName, err));
+        }).catch((err) => onJobError(jobName, err)).finally(() => jobPromises.delete(jobName));
+        jobPromises.set(jobName, p);
       }
 
       // Rebuild queue: everything pending that isn't already running (capped at 50 for perf)
@@ -644,7 +662,7 @@ async function watchLive(config: Config, cwd: string, opts: {
           const supervisorLabel = selfImprove ? `${errors.length} error(s) — self-improve on` : `${errors.length} error(s) in logs`;
           activeJobs.set("supervisor", { label: supervisorLabel, startedAt: Date.now(), stage: "supervisor", model: "haiku" });
           log("supervisor", `found ${errors.length} new error log(s)`);
-          runSupervisor({ targetCwd: cwd, errors, config, selfImprove, sourceRoot }).then(({ summary }) => {
+          const p = runSupervisor({ targetCwd: cwd, errors, config, selfImprove, sourceRoot }).then(({ summary }) => {
             activeJobs.delete("supervisor");
             supervisorStatus.running = false;
             supervisorStatus.lastSummary = summary;
@@ -656,7 +674,8 @@ async function watchLive(config: Config, cwd: string, opts: {
             supervisorStatus.lastSummary = `error: ${String(err).slice(0, 50)}`;
             lastSupervisorCompletedAt = Date.now();
             log("supervisor", `error: ${String(err).slice(0, 60)}`);
-          });
+          }).finally(() => jobPromises.delete("supervisor"));
+          jobPromises.set("supervisor", p);
         }
       }
     }
