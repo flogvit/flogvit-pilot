@@ -71,7 +71,7 @@ If the plan consists of 2 or more clearly distinct, independently completable ta
 
 After the verdict line, output a JSON block in this exact format:
 
-FLOGVIT-CODER:ISSUES:BEGIN
+FLOGVIT-PILOT:ISSUES:BEGIN
 [
   {
     "title": "Brief task title (starts with the issue number context)",
@@ -86,7 +86,7 @@ FLOGVIT-CODER:ISSUES:BEGIN
     "dependsOn": [0]
   }
 ]
-FLOGVIT-CODER:ISSUES:END
+FLOGVIT-PILOT:ISSUES:END
 
 Rules for sub-issues:
 - `dependsOn` uses 0-based indices into this array (not GitHub issue numbers)
@@ -99,5 +99,5 @@ Rules for sub-issues:
 
 After saving the plan file, end your response with EXACTLY ONE of these on the last line:
 
-FLOGVIT-CODER:PLAN:READY — if the plan is complete and self-sufficient (no human choice needed)
-FLOGVIT-CODER:PLAN:NEEDS-HUMAN: <concise question in Norwegian> — if a human must choose between real alternatives
+FLOGVIT-PILOT:PLAN:READY — if the plan is complete and self-sufficient (no human choice needed)
+FLOGVIT-PILOT:PLAN:NEEDS-HUMAN: <concise question in Norwegian> — if a human must choose between real alternatives
