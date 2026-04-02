@@ -3,7 +3,7 @@ import { resolve, basename } from "path";
 import { homedir } from "os";
 import { unlink } from "fs/promises";
 import type { Config } from "../lib/config";
-import { listPRsWithLabel, mergePullRequest, getPR, LABELS } from "../lib/github";
+import { listPRsWithLabel, mergePullRequest, getPR, addPRLabel, removePRLabel, commentOnPR, formatIssueComment, LABELS } from "../lib/github";
 import { loadState, clearState } from "../lib/state";
 import { parsePRIssueNumber } from "./fix-pr";
 
@@ -27,6 +27,16 @@ export async function run(args: string[], config: Config, cwd: string): Promise<
     // Get full PR to find linked issue number
     const fullPR = await getPR(pr.number, cwd);
     const issueNum = parsePRIssueNumber(fullPR.body);
+
+    // Check for merge conflicts — route back to fix-pr instead of crashing
+    const mergeState = await $`gh pr view ${pr.number} --json mergeable --jq .mergeable`.cwd(cwd).nothrow().text();
+    if (mergeState.trim() === "CONFLICTING") {
+      console.log(`PR #${pr.number} has merge conflicts — routing to fix-pr`);
+      await removePRLabel(pr.number, LABELS.approved, cwd).catch(() => {});
+      await addPRLabel(pr.number, LABELS.changesRequested, cwd).catch(() => {});
+      await commentOnPR(pr.number, formatIssueComment("merge conflicts", "This PR has merge conflicts with the base branch and needs to be rebased."), cwd);
+      continue;
+    }
 
     await mergePullRequest(prUrl, cwd);
     console.log(`Merged PR #${pr.number}`);

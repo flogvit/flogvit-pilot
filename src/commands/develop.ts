@@ -146,7 +146,7 @@ export async function runSupervisor(opts: {
 
   const errorSection = errors
     .slice(0, 10) // cap at 10 error logs
-    .map((e) => `**${e.repo}/${e.file}**\n\`\`\`\n${e.excerpt}\n\`\`\``)
+    .map((e) => `**${e.repo}/${e.file}** (\`${e.filePath}\`)\n\`\`\`\n${e.excerpt}\n\`\`\``)
     .join("\n\n");
 
   const selfImproveSection = selfImprove && sourceRoot ? `

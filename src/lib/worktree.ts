@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { join } from "path";
-import { mkdir, rm, writeFile, access } from "fs/promises";
+import { mkdir, rm, writeFile, access, stat } from "fs/promises";
 
 export function worktreesBaseDir(homeDir: string, repoName: string): string {
   return join(homeDir, ".flogvit-pilot", "worktrees", repoName);
@@ -18,9 +18,15 @@ export async function createWorktree(path: string, branch: string, cwd: string):
   await $`git worktree prune`.cwd(cwd).nothrow();
   const branchExists = await $`git show-ref --verify --quiet refs/heads/${branch}`.cwd(cwd).nothrow();
   if (branchExists.exitCode === 0) {
-    await $`git worktree add ${path} ${branch}`.cwd(cwd);
+    const r = await $`git worktree add ${path} ${branch}`.cwd(cwd).nothrow();
+    if (r.exitCode !== 0 && !(await stat(join(path, ".git")).catch(() => null))) {
+      throw new Error(`git worktree add failed (exit ${r.exitCode}): ${r.stderr.toString().trim()}`);
+    }
   } else {
-    await $`git worktree add ${path} -b ${branch}`.cwd(cwd);
+    const r = await $`git worktree add ${path} -b ${branch}`.cwd(cwd).nothrow();
+    if (r.exitCode !== 0 && !(await stat(join(path, ".git")).catch(() => null))) {
+      throw new Error(`git worktree add failed (exit ${r.exitCode}): ${r.stderr.toString().trim()}`);
+    }
   }
 
   // If this is a Rust project, point cargo to a shared target dir to avoid
@@ -42,7 +48,10 @@ export async function createWorktree(path: string, branch: string, cwd: string):
 export async function createWorktreeFromRemote(path: string, branch: string, cwd: string): Promise<void> {
   await mkdir(join(path, ".."), { recursive: true });
   await $`git fetch origin ${branch}`.cwd(cwd);
-  await $`git worktree add ${path} origin/${branch}`.cwd(cwd);
+  const r = await $`git worktree add ${path} origin/${branch}`.cwd(cwd).nothrow();
+  if (r.exitCode !== 0 && !(await stat(join(path, ".git")).catch(() => null))) {
+    throw new Error(`git worktree add failed (exit ${r.exitCode}): ${r.stderr.toString().trim()}`);
+  }
 }
 
 export async function removeWorktree(path: string, cwd: string): Promise<void> {
