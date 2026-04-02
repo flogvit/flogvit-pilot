@@ -6,9 +6,11 @@ const RATE_LIMIT_PATTERNS = [
   /too many requests/i,
   /usage.?limit/i,
   /quota.?exceeded/i,
+  /hit your limit/i,
 ];
 
-const RATE_LIMIT_RETRY_DELAYS_MS = [5 * 60_000, 10 * 60_000, 20 * 60_000];
+// Default delays — overridden at runtime via opts.rateLimitDelaysMs
+const DEFAULT_RATE_LIMIT_RETRY_DELAYS_MS = [5 * 60_000, 10 * 60_000, 20 * 60_000];
 
 function isRateLimited(text: string): boolean {
   return RATE_LIMIT_PATTERNS.some((p) => p.test(text));
@@ -33,11 +35,27 @@ function parseRateLimitDelay(text: string): number | null {
   const hours = text.match(/try again in (\d+)\s*hour/i);
   if (hours) return parseInt(hours[1]) * 3_600_000;
 
-  const resetsAt = text.match(/resets? at (\d{1,2}):(\d{2})/i);
-  if (resetsAt) {
+  // Try "resets at HH:MM" format
+  let resetsMatch = text.match(/resets? at (\d{1,2}):(\d{2})/i);
+  if (resetsMatch) {
     const now = new Date();
     const target = new Date();
-    target.setHours(parseInt(resetsAt[1]), parseInt(resetsAt[2]), 0, 0);
+    target.setHours(parseInt(resetsMatch[1]), parseInt(resetsMatch[2]), 0, 0);
+    if (target <= now) target.setDate(target.getDate() + 1);
+    return target.getTime() - now.getTime();
+  }
+
+  // Try "resets HHpm" or "resets HHam" format (e.g., "resets 10pm")
+  resetsMatch = text.match(/resets?\s+(\d{1,2})(am|pm)\b/i);
+  if (resetsMatch) {
+    let hour = parseInt(resetsMatch[1]);
+    const isPm = resetsMatch[2].toLowerCase() === "pm";
+    if (isPm && hour !== 12) hour += 12;
+    if (!isPm && hour === 12) hour = 0;
+
+    const now = new Date();
+    const target = new Date();
+    target.setHours(hour, 0, 0, 0);
     if (target <= now) target.setDate(target.getDate() + 1);
     return target.getTime() - now.getTime();
   }
@@ -77,6 +95,8 @@ export class ClaudeRunner implements ToolRunner {
 
   async run(opts: ToolRunnerOptions): Promise<ToolResult> {
     const args = this.buildArgs(opts);
+    const command = opts.command ?? "claude";
+    let currentCommand = command;
 
     // Always strip ANTHROPIC_API_KEY so flogvit-pilot agents use Max subscription.
     // If fallbackApiKey is set in config, it will be added on rate limit retry.
@@ -86,9 +106,11 @@ export class ClaudeRunner implements ToolRunner {
     }
     delete env.ANTHROPIC_API_KEY;
 
-    for (let attempt = 0; attempt <= RATE_LIMIT_RETRY_DELAYS_MS.length; attempt++) {
+    const retryDelays = opts.rateLimitDelaysMs ?? DEFAULT_RATE_LIMIT_RETRY_DELAYS_MS;
+
+    for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
       try {
-        const proc = Bun.spawn(["claude", ...args.map(String)], {
+        const proc = Bun.spawn([currentCommand, ...args.map(String)], {
           cwd: opts.cwd,
           stdout: "pipe",
           stderr: "pipe",
@@ -108,6 +130,9 @@ export class ClaudeRunner implements ToolRunner {
         }
         const output = Buffer.concat(chunks).toString("utf-8");
         const stderr = await new Response(proc.stderr).text();
+        if (stderr.trim()) {
+          opts.onChunk?.(`\n[stderr]\n${stderr}`);
+        }
         const exitCode = await proc.exited;
         const combined = `${output}\n${stderr}`;
 
@@ -116,14 +141,22 @@ export class ClaudeRunner implements ToolRunner {
           console.error("[claude] Rate limit hit. Raw stdout:", output.trim());
           console.error("[claude] Rate limit hit. Raw stderr:", stderr.trim());
 
-          if (opts.fallbackApiKey && attempt === 0) {
-            console.error("[claude] Max rate limited. Retrying immediately with fallback API key...");
+          // Try fallback command (e.g., ollama) first
+          if (opts.fallbackCommand && attempt === 0) {
+            console.error(`[claude] Rate limited. Switching to fallback: ${opts.fallbackCommand}`);
+            currentCommand = opts.fallbackCommand;
+            continue;
+          }
+
+          // Try fallback API key second
+          if (opts.fallbackApiKey && attempt <= 1) {
+            console.error("[claude] Max rate limited. Retrying with fallback API key...");
             env.ANTHROPIC_API_KEY = opts.fallbackApiKey;
             continue;
           }
 
           const parsed = parseRateLimitDelay(combined);
-          const delayMs = parsed ?? RATE_LIMIT_RETRY_DELAYS_MS[attempt];
+          const delayMs = parsed ?? retryDelays[attempt];
           if (delayMs === undefined) {
             return {
               success: false,
@@ -138,7 +171,7 @@ export class ClaudeRunner implements ToolRunner {
           } else {
             console.error(
               `[claude] Rate limited. Could not parse wait time from output — using fallback delay of ${delayMin}m` +
-              ` (attempt ${attempt + 1}/${RATE_LIMIT_RETRY_DELAYS_MS.length}). Check raw output above to improve parser.`
+              ` (attempt ${attempt + 1}/${retryDelays.length}). Check raw output above to improve parser.`
             );
           }
           await Bun.sleep(delayMs);
@@ -146,10 +179,11 @@ export class ClaudeRunner implements ToolRunner {
         }
 
         if (exitCode !== 0) {
+          const stderrSnippet = stderr.trim().slice(0, 200);
           return {
             success: false,
             output: combined,
-            summary: `Claude exited with code ${exitCode}`,
+            summary: `Claude exited with code ${exitCode}: ${stderrSnippet || output.trim().slice(0, 200)}`,
           };
         }
 

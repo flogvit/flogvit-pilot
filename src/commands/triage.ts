@@ -3,7 +3,7 @@ import { fileURLToPath } from "url";
 import { homedir } from "os";
 import { readFile } from "fs/promises";
 import type { Config } from "../lib/config";
-import { resolveToolForCommand } from "../lib/config";
+import { resolveToolForCommand, resolveRateLimitDelays, resolveCommandMaxTurns } from "../lib/config";
 import { getTool } from "../lib/tool-runner";
 import {
   getIssue,
@@ -111,16 +111,25 @@ export async function triageIssue(
   const tool = getTool(toolName);
 
   const toolConfig = config.tools[toolName] ?? {};
+  const ollamaConfig = config.tools.ollama;
+  const ollamaModel = ollamaConfig?.model as string | undefined;
+  const fallbackCommand = ollamaConfig ? `ollama launch claude --model ${ollamaModel}` : undefined;
+
   const result = await tool.run({
     prompt,
     cwd,
     jobName: `triage-${issueNum}`,
     fallbackApiKey: config.defaults.fallback_api_key,
-    maxTurns: (toolConfig["max-turns"] as number) ?? 5,
+    fallbackCommand,
+    maxTurns: resolveCommandMaxTurns(config, "triage", toolName) ?? 5,
     allowedTools: [],
+    rateLimitDelaysMs: resolveRateLimitDelays(config),
   });
 
   logger.detail(`Triage output for #${issueNum}:\n${result.output}`);
+  if (!result.success) {
+    logger.summary(`Triage #${issueNum} failed: ${result.summary}`);
+  }
 
   const parsed = parseTriageOutput(result.output);
 

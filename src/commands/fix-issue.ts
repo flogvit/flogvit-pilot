@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 import { mkdir, appendFile, unlink, writeFile } from "fs/promises";
 import { homedir } from "os";
 import type { Config } from "../lib/config";
-import { resolveToolForCommand } from "../lib/config";
+import { resolveToolForCommand, resolveRateLimitDelays, resolveCommandMaxTurns } from "../lib/config";
 import { getTool } from "../lib/tool-runner";
 import {
   getIssue,
@@ -131,6 +131,11 @@ export async function fixIssue(
   await mkdir(activeDir, { recursive: true });
   await writeFile(activeMarker, agentLogFile);
 
+  // Check if ollama fallback is configured
+  const ollamaConfig = config.tools.ollama;
+  const ollamaModel = ollamaConfig?.model as string | undefined;
+  const fallbackCommand = ollamaConfig ? `ollama launch claude --model ${ollamaModel}` : undefined;
+
   let result: Awaited<ReturnType<typeof tool.run>>;
   try {
     result = await tool.run({
@@ -138,11 +143,13 @@ export async function fixIssue(
       cwd: wtPath,
       jobName: `fix-issue-${issueNum}`,
       fallbackApiKey: config.defaults.fallback_api_key,
+      fallbackCommand,
       verbose,
       model,
       onChunk: (chunk) => appendFile(agentLogFile, chunk).catch(() => {}),
-      maxTurns: (toolConfig["max-turns"] as number) ?? undefined,
+      maxTurns: resolveCommandMaxTurns(config, "fix-issue", toolName),
       allowedTools: (toolConfig["allowed-tools"] as string[]) ?? undefined,
+      rateLimitDelaysMs: resolveRateLimitDelays(config),
     });
   } catch (err) {
     // Tool crashed (e.g. max turns, network error) — clean up and mark as stuck
@@ -167,6 +174,9 @@ export async function fixIssue(
   }
 
   logger.detail(result.output);
+  if (!result.success) {
+    logger.detail(`Tool failed: ${result.summary}`);
+  }
 
   const parsed = parseToolOutput(result.output);
 

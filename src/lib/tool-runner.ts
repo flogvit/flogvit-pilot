@@ -3,11 +3,14 @@ export interface ToolRunnerOptions {
   cwd: string;
   jobName?: string;
   fallbackApiKey?: string;
+  fallbackCommand?: string; // Fallback command to use on rate limit (e.g., "ollama launch claude --model qwen3.5:122b")
   verbose?: boolean;
   model?: string;
   onChunk?: (chunk: string) => void;
   allowedTools?: string[];
   maxTurns?: number;
+  command?: string; // Override default command (e.g., "claudeq" instead of "claude")
+  rateLimitDelaysMs?: number[]; // Override rate limit retry delays
 }
 
 export interface ToolResult {

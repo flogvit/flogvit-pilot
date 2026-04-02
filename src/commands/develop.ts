@@ -3,7 +3,7 @@ import { resolve, dirname, basename } from "path";
 import { homedir } from "os";
 import { readdir, readFile, stat, realpath } from "fs/promises";
 import type { Config } from "../lib/config";
-import { resolveToolForCommand } from "../lib/config";
+import { resolveToolForCommand, resolveRateLimitDelays } from "../lib/config";
 import { getTool } from "../lib/tool-runner";
 
 // ---------------------------------------------------------------------------
@@ -182,6 +182,10 @@ If stuck: FLOGVIT-CODER:STUCK:<reason>`;
   const tool = getTool(toolName);
   const toolConfig = config.tools[toolName] ?? {};
 
+  // Check if ollama fallback is configured
+  const ollamaConfig = config.tools.ollama;
+  const ollamaModel = ollamaConfig?.model as string | undefined;
+
   let result: { output: string; success: boolean };
   try {
     result = await tool.run({
@@ -189,8 +193,10 @@ If stuck: FLOGVIT-CODER:STUCK:<reason>`;
       cwd: sourceRoot ?? targetCwd,
       jobName: "supervisor",
       fallbackApiKey: config.defaults.fallback_api_key,
+      fallbackCommand: ollamaConfig ? `ollama launch claude --model ${ollamaModel}` : undefined,
       maxTurns: 15,
       model: "claude-haiku-4-5",
+      rateLimitDelaysMs: resolveRateLimitDelays(config),
     });
   } catch (err) {
     const msg = String(err);

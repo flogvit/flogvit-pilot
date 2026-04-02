@@ -4,9 +4,9 @@
 import "./lib/tools/claude";
 import "./lib/tools/aider";
 
-import { resolveConfig } from "./lib/config";
+import { resolveConfig, ensureGlobalConfig } from "./lib/config";
 import type { Config } from "./lib/config";
-import { checkPrerequisites } from "./lib/github";
+import { checkPrerequisites, checkLabelsExist } from "./lib/github";
 
 interface CommandModule {
   run(args: string[], config: Config, cwd: string): Promise<void>;
@@ -143,7 +143,19 @@ Options:
     await checkPrerequisites();
   }
 
+  // Commands that use flogvit-pilot labels (requires `init` to have been run)
+  const NEEDS_LABELS = new Set([
+    "fix-issue", "fix-issues", "watch", "triage", "split-issue", "plan-issue",
+    "fix-pr", "review-pr", "audit-pr", "merge", "add-issue", "develop",
+  ]);
+
   const cwd = process.cwd();
+
+  await ensureGlobalConfig();
+
+  if (NEEDS_LABELS.has(command)) {
+    await checkLabelsExist(cwd);
+  }
   const config = await resolveConfig(cwd, flags);
 
   try {

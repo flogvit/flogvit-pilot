@@ -322,3 +322,16 @@ export async function ensureLabels(cwd: string): Promise<void> {
     await $`gh label create ${label.name} --description ${label.description} --color ${label.color}`.cwd(cwd).nothrow();
   }
 }
+
+/**
+ * Verify that flogvit-pilot labels exist in the repo.
+ * If not, exit with a message telling the user to run `flogvit-pilot init`.
+ */
+export async function checkLabelsExist(cwd: string): Promise<void> {
+  const result = await $`gh label list --search ${LABELS.needsTriage} --json name --jq .[].name`.cwd(cwd).nothrow().text();
+  if (!result.trim().includes(LABELS.needsTriage)) {
+    console.error("Error: flogvit-pilot labels not found in this repo.");
+    console.error("Run: flogvit-pilot init");
+    process.exit(1);
+  }
+}

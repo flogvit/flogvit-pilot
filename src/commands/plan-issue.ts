@@ -2,7 +2,7 @@ import { resolve, dirname, basename } from "path";
 import { fileURLToPath } from "url";
 import { homedir } from "os";
 import type { Config } from "../lib/config";
-import { resolveToolForCommand } from "../lib/config";
+import { resolveToolForCommand, resolveRateLimitDelays, resolveCommandMaxTurns } from "../lib/config";
 import { getTool } from "../lib/tool-runner";
 import {
   getIssue,
@@ -133,15 +133,24 @@ export async function planIssue(
   const toolName = resolveToolForCommand(config, "plan-issue");
   const tool = getTool(toolName);
   const toolConfig = config.tools[toolName] ?? {};
+  const ollamaConfig = config.tools.ollama;
+  const ollamaModel = ollamaConfig?.model as string | undefined;
+  const fallbackCommand = ollamaConfig ? `ollama launch claude --model ${ollamaModel}` : undefined;
 
   const result = await tool.run({
     prompt,
     cwd,
     jobName: `plan-issue-${issueNum}`,
     fallbackApiKey: config.defaults.fallback_api_key,
+    fallbackCommand,
     allowedTools: ["Read", "Glob", "Grep", "Write"],
-    maxTurns: (toolConfig["max-turns"] as number) ?? 20,
+    maxTurns: resolveCommandMaxTurns(config, "plan-issue", toolName) ?? 20,
+    rateLimitDelaysMs: resolveRateLimitDelays(config),
   });
+
+  if (!result.success) {
+    logger.summary(`Plan issue #${issueNum} failed: ${result.summary}`);
+  }
 
   const parsed = parsePlanOutput(result.output);
 

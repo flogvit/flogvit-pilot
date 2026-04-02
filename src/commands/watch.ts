@@ -3,7 +3,7 @@ import { resolve, basename } from "path";
 import { homedir } from "os";
 import { readdir, rm } from "fs/promises";
 import type { Config } from "../lib/config";
-import { resolveToolForCommand } from "../lib/config";
+import { resolveToolForCommand, resolveMaxConcurrentJobs, resolveWatchConfig } from "../lib/config";
 import { listOpenIssues, listOpenPRs, getIssue, removeLabel, addLabel, addPRLabel, removePRLabel, parseDependsOn, LABELS } from "../lib/github";
 import { loadState, saveState } from "../lib/state";
 import { triageIssue } from "./triage";
@@ -48,6 +48,7 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
   const repoName = basename(cwd);
   const homeDir = process.env.HOME ?? homedir();
   const stateDir = resolve(homeDir, ".flogvit-pilot", "state");
+  const watchCfg = resolveWatchConfig(config);
 
   // Fetch all open issues and PRs in two calls — filter locally
   const allOpenIssues = await listOpenIssues(cwd);
@@ -133,8 +134,8 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
         // Leftover triage state — proceed normally
       } else if (existingState.command === "fix-issue") {
         const attempts = existingState.fixAttempts ?? 0;
-        if (attempts >= 3 || !issue.labels.includes(LABELS.waiting)) continue;
-        retryModel = "opus";
+        if (attempts >= watchCfg.max_fix_attempts || !issue.labels.includes(LABELS.waiting)) continue;
+        retryModel = watchCfg.retry_model;
         console.log(`Retrying stuck fix for issue #${issue.number} (attempt ${attempts + 1})`);
         await removeLabel(issue.number, LABELS.waiting, cwd);
       } else {
@@ -171,11 +172,11 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
     if (!issueNum) continue;
     const state = await loadState(stateDir, repoName, issueNum);
     const prFixAttempts = state?.prFixAttempts ?? 0;
-    if (prFixAttempts >= 3) {
+    if (prFixAttempts >= watchCfg.max_pr_fix_attempts) {
       console.log(`PR #${pr.number}: prFixAttempts exhausted, skipping`);
       continue;
     }
-    const model = prFixAttempts >= 1 ? "opus" : undefined;
+    const model = prFixAttempts >= 1 ? watchCfg.retry_model : undefined;
     console.log(`Fixing PR #${pr.number} (attempt ${prFixAttempts + 1})`);
     await fixPR(pr.number, config, cwd, false, model);
   }
@@ -219,6 +220,26 @@ function jobModel(config: Config, command: string, override?: string): string {
   const toolName = resolveToolForCommand(config, command);
   const model = config.tools[toolName]?.model as string | undefined;
   return shortModel(model);
+}
+
+/**
+ * Check if we can start a new job for a given command/tool.
+ * Returns true if active jobs for this tool are below the tool-specific limit.
+ */
+function canStartJobForCommand(
+  config: Config,
+  command: string,
+  activeJobs: Map<string, ActiveJob>,
+  maxJobsOverride?: number
+): boolean {
+  const toolName = resolveToolForCommand(config, command);
+  const toolMaxJobs = maxJobsOverride ?? resolveMaxConcurrentJobs(config, toolName);
+
+  // Count active jobs for this tool's model
+  const toolModel = jobModel(config, command);
+  const activeJobsForTool = [...activeJobs.values()].filter((job) => job.model === toolModel).length;
+
+  return activeJobsForTool < toolMaxJobs;
 }
 
 const FLOGVIT_LABEL_PREFIXES = ["flogvit-pilot:", "flogvit-coder:"];
@@ -321,7 +342,8 @@ async function watchLive(config: Config, cwd: string, opts: {
   let running = true;
   let lastLogScanTime = Date.now();
   let lastSupervisorCompletedAt = 0;
-  const SUPERVISOR_COOLDOWN_MS = 5 * 60 * 1000; // don't re-run within 5 minutes of last completion
+  const watchCfg = resolveWatchConfig(config);
+  const SUPERVISOR_COOLDOWN_MS = watchCfg.supervisor_cooldown_s * 1000;
   // Track read offsets per log file so we only send new content to the supervisor
   const logOffsets = new Map<string, number>();
 
@@ -400,6 +422,13 @@ async function watchLive(config: Config, cwd: string, opts: {
         log(`pr-${pr.number}`, `unlabeled PR → needs-verify`);
       }
 
+      // Count active jobs per tool to respect tool-specific max_concurrent_jobs
+      const activeJobsByTool = new Map<string, number>();
+      for (const job of activeJobs.values()) {
+        const count = activeJobsByTool.get(job.model) ?? 0;
+        activeJobsByTool.set(job.model, count + 1);
+      }
+
       const maxJobs = maxJobsOverride ?? config.defaults.max_concurrent_jobs ?? 3;
 
       // TRIAGE — exempt from cap: determines priority of everything else
@@ -458,13 +487,23 @@ async function watchLive(config: Config, cwd: string, opts: {
       }
 
       // PIPELINE STAGES — highest priority among capped jobs (near completion)
+      // Track which PRs already have an active pipeline job to prevent concurrent stages
+      const prsWithActivePipelineJob = new Set<number>();
+      for (const [key] of activeJobs) {
+        for (const s of PIPELINE_STAGES) {
+          const m = key.match(new RegExp(`^${s}-(\\d+)$`));
+          if (m) prsWithActivePipelineJob.add(parseInt(m[1]));
+        }
+      }
       for (const stage of PIPELINE_STAGES) {
         for (const pr of prsByLabel(STAGE_LABELS[stage])) {
-          if (activeJobs.size >= maxJobs) break;
           if (pr.labels.includes(LABELS.inProgress)) continue;
+          if (prsWithActivePipelineJob.has(pr.number)) continue;
+          if (!canStartJobForCommand(config, stage, activeJobs, maxJobsOverride)) continue;
           const jobName = `${stage}-${pr.number}`;
           if (activeJobs.has(jobName)) continue;
           activeJobs.set(jobName, { label: pr.title, startedAt: Date.now(), stage, model: jobModel(config, stage) });
+          prsWithActivePipelineJob.add(pr.number);
           log(jobName, `starting ${stage} for PR #${pr.number}`);
           let stagePromise: Promise<{ success: boolean }> = Promise.resolve({ success: false });
           switch (stage) {
@@ -486,14 +525,14 @@ async function watchLive(config: Config, cwd: string, opts: {
         pr.labels.includes(LABELS.changesRequested) || pr.labels.includes(LABELS.failed)
       );
       for (const pr of retryPRs) {
-        if (activeJobs.size >= maxJobs) break;
         if (pr.labels.includes(LABELS.inProgress)) continue;
+        if (!canStartJobForCommand(config, "fix-pr", activeJobs, maxJobsOverride)) continue;
         if (pr.labels.includes(LABELS.approved)) continue;
         const issueNum = parsePRIssueNumber(pr.body);
         if (!issueNum) continue;
         const state = await loadState(stateDir, repoName, issueNum);
         const prFixAttempts = state?.prFixAttempts ?? 0;
-        if (prFixAttempts >= 3) {
+        if (prFixAttempts >= watchCfg.max_pr_fix_attempts) {
           // Escalate to human — remove failure labels and add waiting
           log(`fix-pr-${pr.number}`, `fix-pr exhausted after ${prFixAttempts} attempts — escalating`);
           await removePRLabel(pr.number, LABELS.changesRequested, cwd).catch(() => {});
@@ -503,7 +542,7 @@ async function watchLive(config: Config, cwd: string, opts: {
         }
         const jobName = `fix-pr-${pr.number}`;
         if (activeJobs.has(jobName)) continue;
-        const model = prFixAttempts >= 1 ? "opus" : undefined;
+        const model = prFixAttempts >= 1 ? watchCfg.retry_model : undefined;
         activeJobs.set(jobName, { label: pr.title, startedAt: Date.now(), stage: "fix-pr", model: jobModel(config, "fix-pr", model) });
         log(jobName, `fixing PR #${pr.number} (attempt ${prFixAttempts + 1})`);
         const p = fixPR(pr.number, config, cwd, false, model).then(() => {
@@ -515,8 +554,8 @@ async function watchLive(config: Config, cwd: string, opts: {
 
       // SPLIT — runs before plan; split-issue decides whether to split, pass through, or escalate to plan
       for (const issue of sortByPriority(byLabel(LABELS.needsSplit))) {
-        if (activeJobs.size >= maxJobs) break;
         if (inProgressNums.has(issue.number)) continue;
+        if (!canStartJobForCommand(config, "split-issue", activeJobs, maxJobsOverride)) continue;
         const blockedBy = checkDeps(issue.body, openIssueNums);
         if (blockedBy.length > 0) {
           if (!issue.labels.includes(LABELS.blocked)) {
@@ -542,8 +581,8 @@ async function watchLive(config: Config, cwd: string, opts: {
 
       // PLAN + FIX — sorted by issue priority (bug > enhancement, high > medium > low)
       for (const issue of sortByPriority(byLabel(LABELS.needsPlan))) {
-        if (activeJobs.size >= maxJobs) break;
         if (inProgressNums.has(issue.number)) continue;
+        if (!canStartJobForCommand(config, "plan-issue", activeJobs, maxJobsOverride)) continue;
         const blockedBy = checkDeps(issue.body, openIssueNums);
         if (blockedBy.length > 0) {
           if (!issue.labels.includes(LABELS.blocked)) {
@@ -568,8 +607,8 @@ async function watchLive(config: Config, cwd: string, opts: {
       }
 
       for (const issue of sortByPriority(byLabel(LABELS.autofix))) {
-        if (activeJobs.size >= maxJobs) break;
         if (inProgressNums.has(issue.number)) continue;
+        if (!canStartJobForCommand(config, "fix-issue", activeJobs, maxJobsOverride)) continue;
         const blockedBy = checkDeps(issue.body, openIssueNums);
         if (blockedBy.length > 0) {
           if (!issue.labels.includes(LABELS.blocked)) {
@@ -592,8 +631,8 @@ async function watchLive(config: Config, cwd: string, opts: {
             // Leftover triage state — proceed normally
           } else if (existingState.command === "fix-issue") {
             const attempts = existingState.fixAttempts ?? 0;
-            if (attempts >= 3 || !issue.labels.includes(LABELS.waiting)) continue;
-            retryModel = "opus";
+            if (attempts >= watchCfg.max_fix_attempts || !issue.labels.includes(LABELS.waiting)) continue;
+            retryModel = watchCfg.retry_model;
             log(jobName, `retry stuck fix (attempt ${attempts + 1})`);
             await removeLabel(issue.number, LABELS.waiting, cwd);
           } else {
@@ -720,9 +759,9 @@ async function watchLive(config: Config, cwd: string, opts: {
     // worktrees dir doesn't exist yet — that's fine
   }
 
-  // Poll immediately, then every 60 seconds
+  // Poll immediately, then on configured interval
   await poll();
-  const pollInterval = setInterval(poll, 60_000);
+  const pollInterval = setInterval(poll, watchCfg.poll_interval_s * 1000);
 
   // Keep alive until SIGINT
   await new Promise<void>((resolve) => {

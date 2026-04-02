@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 import { mkdir, appendFile } from "fs/promises";
 import { homedir } from "os";
 import type { Config } from "../lib/config";
-import { resolveToolForCommand } from "../lib/config";
+import { resolveToolForCommand, resolveRateLimitDelays, resolveCommandMaxTurns } from "../lib/config";
 import { getTool } from "../lib/tool-runner";
 import {
   getPR,
@@ -103,19 +103,28 @@ export async function fixPR(
   const agentLogFile = logger.getLogFile().replace(".log", "-agent.log");
   await mkdir(resolve(agentLogFile, ".."), { recursive: true });
 
+  const ollamaConfig = config.tools.ollama;
+  const ollamaModel = ollamaConfig?.model as string | undefined;
+  const fallbackCommand = ollamaConfig ? `ollama launch claude --model ${ollamaModel}` : undefined;
+
   const result = await tool.run({
     prompt,
     cwd: wtPath,
     jobName: `fix-pr-${prNumber}`,
     fallbackApiKey: config.defaults.fallback_api_key,
+    fallbackCommand,
     verbose,
     model,
     onChunk: (chunk) => appendFile(agentLogFile, chunk).catch(() => {}),
-    maxTurns: (toolConfig["max-turns"] as number) ?? undefined,
+    maxTurns: resolveCommandMaxTurns(config, "fix-pr", toolName),
     allowedTools: (toolConfig["allowed-tools"] as string[]) ?? undefined,
+    rateLimitDelaysMs: resolveRateLimitDelays(config),
   });
 
   logger.detail(result.output);
+  if (!result.success) {
+    logger.detail(`Tool failed: ${result.summary}`);
+  }
 
   const parsed = parseToolOutput(result.output);
   const diffResult = await $`git status --porcelain`.cwd(wtPath).nothrow().text();

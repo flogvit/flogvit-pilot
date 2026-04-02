@@ -3,7 +3,7 @@ import { fileURLToPath } from "url";
 import { mkdir, appendFile } from "fs/promises";
 import { homedir } from "os";
 import type { Config } from "../lib/config";
-import { resolveToolForCommand } from "../lib/config";
+import { resolveToolForCommand, resolveRateLimitDelays, resolveCommandMaxTurns } from "../lib/config";
 import { getTool } from "../lib/tool-runner";
 import {
   getPRDiff,
@@ -63,18 +63,27 @@ export async function auditPR(
   const agentLogFile = logger.getLogFile().replace(".log", "-agent.log");
   await mkdir(resolve(agentLogFile, ".."), { recursive: true });
 
+  const ollamaConfig = config.tools.ollama;
+  const ollamaModel = ollamaConfig?.model as string | undefined;
+  const fallbackCommand = ollamaConfig ? `ollama launch claude --model ${ollamaModel}` : undefined;
+
   const result = await tool.run({
     prompt,
     cwd,
     jobName: `audit-pr-${prNumber}`,
     fallbackApiKey: config.defaults.fallback_api_key,
+    fallbackCommand,
     verbose,
     onChunk: (chunk) => appendFile(agentLogFile, chunk).catch(() => {}),
-    maxTurns: (toolConfig["max-turns"] as number) ?? undefined,
+    maxTurns: resolveCommandMaxTurns(config, "audit-pr", toolName),
     allowedTools: (toolConfig["allowed-tools"] as string[]) ?? undefined,
+    rateLimitDelaysMs: resolveRateLimitDelays(config),
   });
 
   logger.detail(result.output);
+  if (!result.success) {
+    logger.summary(`Audit PR #${prNumber} failed: ${result.summary}`);
+  }
 
   process.off("SIGINT", cleanup);
   process.off("SIGTERM", cleanup);
