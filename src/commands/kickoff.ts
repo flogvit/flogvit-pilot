@@ -126,8 +126,9 @@ export async function kickoff(
     );
     console.log(`Created parent issue #${parentNum}`);
 
-    // Create milestones and issues
+    // Create milestones and issues (skip empty milestones)
     for (const milestone of plan.milestones) {
+      if (milestone.issues.length === 0) continue;
       let msNum = await findMilestone(milestone.title, cwd);
       if (!msNum) {
         msNum = await createMilestone(milestone.title, milestone.description, cwd);

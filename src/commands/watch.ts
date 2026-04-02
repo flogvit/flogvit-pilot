@@ -314,9 +314,10 @@ function renderUI(
     console.log();
   }
 
-  if (milestones.length > 0) {
+  const activeMilestones = milestones.filter((ms) => ms.openIssues + ms.closedIssues > 0);
+  if (activeMilestones.length > 0) {
     console.log("MILESTONES");
-    for (const ms of milestones) {
+    for (const ms of activeMilestones) {
       const total = ms.openIssues + ms.closedIssues;
       const pct = total > 0 ? Math.round((ms.closedIssues / total) * 100) : 0;
       const bar = total > 0
