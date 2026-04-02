@@ -37,3 +37,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .claude
 .playwright
 CLAUDE.md
+
+# flogvit-pilot local config
+.flogvit-pilot/

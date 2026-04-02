@@ -160,7 +160,7 @@ max_concurrent_jobs = 3
 # fallback_api_key = "sk-..."
 
 [tools.claude]
-model = "claude-opus-4-6"
+model = "claude-opus-4-6[1m]"
 max-turns = 50
 allowed-tools = ["Bash", "Read", "Edit", "Write", "Glob", "Grep"]
 # command = "claude"          # override binary name
