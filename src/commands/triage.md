@@ -60,7 +60,7 @@ Read the issue carefully. Decide which of these applies:
 
 Write a short analysis (2-5 sentences), then end with EXACTLY ONE of these on the last line (no backticks, no formatting):
 
-FLOGVIT-CODER:TRIAGE:CLOSE: <short reason why it can be closed>
-FLOGVIT-CODER:TRIAGE:AUTOFIX
-FLOGVIT-CODER:TRIAGE:NEEDS-SPLIT
-FLOGVIT-CODER:TRIAGE:WAITING: <concise reason in Norwegian>
+FLOGVIT-PILOT:TRIAGE:CLOSE: <short reason why it can be closed>
+FLOGVIT-PILOT:TRIAGE:AUTOFIX
+FLOGVIT-PILOT:TRIAGE:NEEDS-SPLIT
+FLOGVIT-PILOT:TRIAGE:WAITING: <concise reason in Norwegian>

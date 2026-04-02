@@ -93,16 +93,16 @@ export async function auditPR(
   const lines = result.output.trim().split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim().replace(/^`+|`+$/g, "");
-    if (line.startsWith("FLOGVIT-CODER:AUDIT:APPROVED:")) {
-      const reason = line.replace("FLOGVIT-CODER:AUDIT:APPROVED:", "").trim();
+    if (line.startsWith("FLOGVIT-PILOT:AUDIT:APPROVED:")) {
+      const reason = line.replace("FLOGVIT-PILOT:AUDIT:APPROVED:", "").trim();
       await removePRLabel(prNumber, LABELS.changesRequested, cwd);
       await removePRLabel(prNumber, LABELS.failed, cwd);
       await addPRLabel(prNumber, LABELS.approved, cwd);
       logger.summary(`PR #${prNumber}: audit approved — ${reason}`);
       return { success: true };
     }
-    if (line.startsWith("FLOGVIT-CODER:AUDIT:SECURITY-ISSUE:")) {
-      const description = line.replace("FLOGVIT-CODER:AUDIT:SECURITY-ISSUE:", "").trim();
+    if (line.startsWith("FLOGVIT-PILOT:AUDIT:SECURITY-ISSUE:")) {
+      const description = line.replace("FLOGVIT-PILOT:AUDIT:SECURITY-ISSUE:", "").trim();
       await addPRLabel(prNumber, LABELS.securityIssue, cwd);
       await commentOnPR(
         prNumber,

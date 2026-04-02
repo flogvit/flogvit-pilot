@@ -37,11 +37,11 @@ export function parseToolOutput(output: string): ToolOutputResult {
   const lines = output.trim().split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim().replace(/^`+|`+$/g, "");
-    if (line.startsWith("FLOGVIT-CODER:DONE:")) {
-      return { status: "done", message: line.replace("FLOGVIT-CODER:DONE:", "") };
+    if (line.startsWith("FLOGVIT-PILOT:DONE:")) {
+      return { status: "done", message: line.replace("FLOGVIT-PILOT:DONE:", "") };
     }
-    if (line.startsWith("FLOGVIT-CODER:STUCK:")) {
-      return { status: "stuck", message: line.replace("FLOGVIT-CODER:STUCK:", "") };
+    if (line.startsWith("FLOGVIT-PILOT:STUCK:")) {
+      return { status: "stuck", message: line.replace("FLOGVIT-PILOT:STUCK:", "") };
     }
   }
   return { status: "unknown", message: "" };

@@ -30,6 +30,6 @@ You are an autonomous coding agent fixing a GitHub issue.
 - Make minimal, focused changes. Don't refactor unrelated code.
 - Follow existing code style and conventions.
 - If you cannot fix this issue, respond with EXACTLY this on the last line (no backticks):
-  FLOGVIT-CODER:STUCK:<your question for the developer>
+  FLOGVIT-PILOT:STUCK:<your question for the developer>
 - If you successfully fix the issue, respond with EXACTLY this on the last line (no backticks):
-  FLOGVIT-CODER:DONE:<one-line summary of what you did>
+  FLOGVIT-PILOT:DONE:<one-line summary of what you did>

@@ -4,14 +4,14 @@ import { parsePlanOutput, slugify, parseSubIssues } from "../../src/commands/pla
 describe("parsePlanOutput", () => {
   test("detects READY verdict", () => {
     const output = `Here is the complete implementation plan with all steps defined.
-FLOGVIT-CODER:PLAN:READY`;
+FLOGVIT-PILOT:PLAN:READY`;
     const result = parsePlanOutput(output);
     expect(result.verdict).toBe("ready");
   });
 
   test("detects NEEDS-HUMAN verdict with reason", () => {
     const output = `The plan has two viable approaches for the database layer.
-FLOGVIT-CODER:PLAN:NEEDS-HUMAN: Choose between Postgres and SQLite`;
+FLOGVIT-PILOT:PLAN:NEEDS-HUMAN: Choose between Postgres and SQLite`;
     const result = parsePlanOutput(output);
     expect(result.verdict).toBe("needs-human");
     if (result.verdict === "needs-human") {
@@ -55,13 +55,13 @@ describe("slugify", () => {
 
 describe("parseSubIssues", () => {
   test("parses a valid sub-issues block", () => {
-    const output = `FLOGVIT-CODER:PLAN:READY
-FLOGVIT-CODER:ISSUES:BEGIN
+    const output = `FLOGVIT-PILOT:PLAN:READY
+FLOGVIT-PILOT:ISSUES:BEGIN
 [
   {"title": "Task 1", "body": "Do X", "labels": ["enhancement"], "dependsOn": []},
   {"title": "Task 2", "body": "Do Y", "labels": ["enhancement"], "dependsOn": [0]}
 ]
-FLOGVIT-CODER:ISSUES:END`;
+FLOGVIT-PILOT:ISSUES:END`;
     const result = parseSubIssues(output);
     expect(result).not.toBeNull();
     expect(result!.length).toBe(2);
@@ -71,20 +71,20 @@ FLOGVIT-CODER:ISSUES:END`;
   });
 
   test("returns null when no block present", () => {
-    expect(parseSubIssues("FLOGVIT-CODER:PLAN:READY")).toBeNull();
+    expect(parseSubIssues("FLOGVIT-PILOT:PLAN:READY")).toBeNull();
   });
 
   test("returns null for invalid JSON", () => {
-    const output = `FLOGVIT-CODER:ISSUES:BEGIN
+    const output = `FLOGVIT-PILOT:ISSUES:BEGIN
 not json
-FLOGVIT-CODER:ISSUES:END`;
+FLOGVIT-PILOT:ISSUES:END`;
     expect(parseSubIssues(output)).toBeNull();
   });
 
   test("defaults missing fields", () => {
-    const output = `FLOGVIT-CODER:ISSUES:BEGIN
+    const output = `FLOGVIT-PILOT:ISSUES:BEGIN
 [{"title": "Minimal"}]
-FLOGVIT-CODER:ISSUES:END`;
+FLOGVIT-PILOT:ISSUES:END`;
     const result = parseSubIssues(output);
     expect(result![0].body).toBe("");
     expect(result![0].labels).toEqual([]);

@@ -33,14 +33,14 @@ export function parseTriageOutput(output: string): TriageVerdict {
   const lines = output.trim().split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim().replace(/^`+|`+$/g, "");
-    if (line === "FLOGVIT-CODER:TRIAGE:AUTOFIX") return { verdict: "autofix" };
-    if (line === "FLOGVIT-CODER:TRIAGE:NEEDS-SPLIT") return { verdict: "needs-split" };
-    if (line === "FLOGVIT-CODER:TRIAGE:NEEDS-PLAN") return { verdict: "needs-split" }; // legacy → route through split-issue
-    if (line.startsWith("FLOGVIT-CODER:TRIAGE:WAITING:")) {
-      return { verdict: "waiting", reason: line.replace("FLOGVIT-CODER:TRIAGE:WAITING:", "").trim() };
+    if (line === "FLOGVIT-PILOT:TRIAGE:AUTOFIX") return { verdict: "autofix" };
+    if (line === "FLOGVIT-PILOT:TRIAGE:NEEDS-SPLIT") return { verdict: "needs-split" };
+    if (line === "FLOGVIT-PILOT:TRIAGE:NEEDS-PLAN") return { verdict: "needs-split" }; // legacy → route through split-issue
+    if (line.startsWith("FLOGVIT-PILOT:TRIAGE:WAITING:")) {
+      return { verdict: "waiting", reason: line.replace("FLOGVIT-PILOT:TRIAGE:WAITING:", "").trim() };
     }
-    if (line.startsWith("FLOGVIT-CODER:TRIAGE:CLOSE:")) {
-      return { verdict: "close", reason: line.replace("FLOGVIT-CODER:TRIAGE:CLOSE:", "").trim() };
+    if (line.startsWith("FLOGVIT-PILOT:TRIAGE:CLOSE:")) {
+      return { verdict: "close", reason: line.replace("FLOGVIT-PILOT:TRIAGE:CLOSE:", "").trim() };
     }
   }
   return { verdict: "unknown" };

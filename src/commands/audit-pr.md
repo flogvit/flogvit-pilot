@@ -25,6 +25,6 @@ Perform a focused security audit of the diff above. Check specifically for:
 
 - Only flag genuine security concerns. Do not report theoretical or extremely unlikely issues.
 - If the diff is clean and introduces no security problems, end your response with EXACTLY this on the last line (no backticks):
-  FLOGVIT-CODER:AUDIT:APPROVED: <one sentence confirming no issues found>
+  FLOGVIT-PILOT:AUDIT:APPROVED: <one sentence confirming no issues found>
 - If you find a security issue that must be fixed before merging, end your response with EXACTLY this on the last line (no backticks):
-  FLOGVIT-CODER:AUDIT:SECURITY-ISSUE: <one sentence describing the issue>
+  FLOGVIT-PILOT:AUDIT:SECURITY-ISSUE: <one sentence describing the issue>

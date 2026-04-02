@@ -4,7 +4,7 @@ import { parseToolOutput, buildIssueCommentsSection } from "../../src/commands/f
 describe("parseToolOutput", () => {
   test("detects DONE status", () => {
     const output = `Some work output here
-FLOGVIT-CODER:DONE:Fixed the null pointer in parse_config`;
+FLOGVIT-PILOT:DONE:Fixed the null pointer in parse_config`;
     const result = parseToolOutput(output);
     expect(result.status).toBe("done");
     expect(result.message).toBe("Fixed the null pointer in parse_config");
@@ -12,7 +12,7 @@ FLOGVIT-CODER:DONE:Fixed the null pointer in parse_config`;
 
   test("detects STUCK status", () => {
     const output = `Tried to fix but unclear
-FLOGVIT-CODER:STUCK:Should this handle both UTF-8 and UTF-16?`;
+FLOGVIT-PILOT:STUCK:Should this handle both UTF-8 and UTF-16?`;
     const result = parseToolOutput(output);
     expect(result.status).toBe("stuck");
     expect(result.message).toBe("Should this handle both UTF-8 and UTF-16?");

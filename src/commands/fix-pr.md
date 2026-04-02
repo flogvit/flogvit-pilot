@@ -40,6 +40,6 @@ You are an autonomous coding agent fixing a pull request that failed code review
 - Only fix what the failure context describes. Don't refactor unrelated code.
 - Follow existing code style and conventions.
 - If you cannot fix this issue, respond with EXACTLY this on the last line:
-  `FLOGVIT-CODER:STUCK:<your question for the developer>`
+  `FLOGVIT-PILOT:STUCK:<your question for the developer>`
 - If you successfully address the failure, respond with EXACTLY this on the last line:
-  `FLOGVIT-CODER:DONE:<one-line summary of what you changed>`
+  `FLOGVIT-PILOT:DONE:<one-line summary of what you changed>`

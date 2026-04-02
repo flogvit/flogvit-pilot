@@ -31,11 +31,11 @@ export function parsePlanOutput(output: string): PlanVerdict {
   const lines = output.trim().split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim().replace(/^`+|`+$/g, "");
-    if (line === "FLOGVIT-CODER:PLAN:READY") return { verdict: "ready" };
-    if (line.startsWith("FLOGVIT-CODER:PLAN:NEEDS-HUMAN:")) {
+    if (line === "FLOGVIT-PILOT:PLAN:READY") return { verdict: "ready" };
+    if (line.startsWith("FLOGVIT-PILOT:PLAN:NEEDS-HUMAN:")) {
       return {
         verdict: "needs-human",
-        reason: line.replace("FLOGVIT-CODER:PLAN:NEEDS-HUMAN:", "").trim(),
+        reason: line.replace("FLOGVIT-PILOT:PLAN:NEEDS-HUMAN:", "").trim(),
       };
     }
   }
@@ -50,7 +50,7 @@ export interface SubIssue {
 }
 
 export function parseSubIssues(output: string): SubIssue[] | null {
-  const match = output.match(/FLOGVIT-CODER:ISSUES:BEGIN\s*([\s\S]*?)\s*FLOGVIT-CODER:ISSUES:END/);
+  const match = output.match(/FLOGVIT-PILOT:ISSUES:BEGIN\s*([\s\S]*?)\s*FLOGVIT-PILOT:ISSUES:END/);
   if (!match) return null;
   try {
     const parsed = JSON.parse(match[1]);

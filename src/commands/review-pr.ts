@@ -93,16 +93,16 @@ export async function reviewPR(
   const lines = result.output.trim().split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i].trim().replace(/^`+|`+$/g, "");
-    if (line.startsWith("FLOGVIT-CODER:REVIEW:APPROVE:")) {
-      const reason = line.replace("FLOGVIT-CODER:REVIEW:APPROVE:", "").trim();
+    if (line.startsWith("FLOGVIT-PILOT:REVIEW:APPROVE:")) {
+      const reason = line.replace("FLOGVIT-PILOT:REVIEW:APPROVE:", "").trim();
       await removePRLabel(prNumber, LABELS.changesRequested, cwd);
       await removePRLabel(prNumber, LABELS.failed, cwd);
       await addPRLabel(prNumber, LABELS.needsAudit, cwd);
       logger.summary(`PR #${prNumber}: review approved — ${reason}`);
       return { success: true };
     }
-    if (line.startsWith("FLOGVIT-CODER:REVIEW:CHANGES-REQUESTED:")) {
-      const reason = line.replace("FLOGVIT-CODER:REVIEW:CHANGES-REQUESTED:", "").trim();
+    if (line.startsWith("FLOGVIT-PILOT:REVIEW:CHANGES-REQUESTED:")) {
+      const reason = line.replace("FLOGVIT-PILOT:REVIEW:CHANGES-REQUESTED:", "").trim();
       await addPRLabel(prNumber, LABELS.changesRequested, cwd);
       await commentOnPR(
         prNumber,

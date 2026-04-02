@@ -175,8 +175,8 @@ ${errorSection || "No errors — nothing to do."}
 
 ---
 
-When done: FLOGVIT-CODER:DONE:<one line summary or "nothing to do">
-If stuck: FLOGVIT-CODER:STUCK:<reason>`;
+When done: FLOGVIT-PILOT:DONE:<one line summary or "nothing to do">
+If stuck: FLOGVIT-PILOT:STUCK:<reason>`;
 
   const toolName = resolveToolForCommand(config, "fix-issue");
   const tool = getTool(toolName);
@@ -223,7 +223,7 @@ If stuck: FLOGVIT-CODER:STUCK:<reason>`;
   }
 
   const lastLine = result.output.trim().split("\n").pop() ?? "";
-  const summary = lastLine.replace(/^FLOGVIT-CODER:DONE:/, "").replace(/^FLOGVIT-CODER:STUCK:/, "STUCK: ");
+  const summary = lastLine.replace(/^FLOGVIT-PILOT:DONE:/, "").replace(/^FLOGVIT-PILOT:STUCK:/, "STUCK: ");
   return { success: result.success, summary: summary + selfImproveSuffix };
 }
 
