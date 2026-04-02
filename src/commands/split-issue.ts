@@ -146,7 +146,7 @@ export async function splitIssue(
       await addLabel(issueNum, LABELS.waiting, cwd);
       await commentOnIssue(
         issueNum,
-        formatIssueComment("waiting", `Trenger avklaring før splitting:\n\n${parsed.reason}`),
+        formatIssueComment("waiting", `Needs clarification before splitting:\n\n${parsed.reason}`),
         cwd
       );
       logger.summary(`Issue #${issueNum}: escalated — ${parsed.reason}`);

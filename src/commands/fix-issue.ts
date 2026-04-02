@@ -168,7 +168,7 @@ export async function fixIssue(
       fixAttempts,
     });
     await addLabel(issueNum, LABELS.waiting, cwd);
-    await commentOnIssue(issueNum, formatIssueComment("waiting", `Agent krasjet (${String(err).slice(0, 120)}). Prøver igjen automatisk.`), cwd);
+    await commentOnIssue(issueNum, formatIssueComment("waiting", `Agent crashed (${String(err).slice(0, 120)}). Will retry automatically.`), cwd);
     logger.summary(`Issue #${issueNum}: tool crashed — ${String(err).slice(0, 120)}`);
     return { success: false };
   }
@@ -203,7 +203,7 @@ export async function fixIssue(
       fixAttempts,
     });
     await addLabel(issueNum, LABELS.waiting, cwd);
-    await commentOnIssue(issueNum, formatIssueComment("waiting", `Agenten brukte opp alle turn uten å fullføre. Prøver igjen automatisk.`), cwd);
+    await commentOnIssue(issueNum, formatIssueComment("waiting", `Agent exhausted all turns without completing. Will retry automatically.`), cwd);
     logger.summary(`Issue #${issueNum}: max turns, no changes — will retry`);
     return { success: false };
   }

@@ -69,7 +69,7 @@ export async function triageIssue(
     await addLabel(issueNum, LABELS.waiting, cwd);
     await commentOnIssue(
       issueNum,
-      formatIssueComment("waiting", "Trenger manuell gjennomgang — har kjørt triage for mange ganger uten å komme videre."),
+      formatIssueComment("waiting", "Needs manual review — triage has run too many times without resolution."),
       cwd
     );
     await saveState(stateDir, repoName, issueNum, {
@@ -169,7 +169,7 @@ export async function triageIssue(
   const reason =
     parsed.verdict === "waiting"
       ? parsed.reason
-      : "Triage-agent ga ikke en klar anbefaling. Vennligst avklar hva som skal gjøres.";
+      : "Triage agent could not determine a clear action. Please clarify what should be done.";
 
   await addLabel(issueNum, LABELS.waiting, cwd);
   await commentOnIssue(issueNum, formatIssueComment("waiting", reason), cwd);
