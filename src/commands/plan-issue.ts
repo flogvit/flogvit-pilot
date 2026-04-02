@@ -1,6 +1,7 @@
 import { resolve, dirname, basename } from "path";
 import { fileURLToPath } from "url";
 import { homedir } from "os";
+import { readFile } from "fs/promises";
 import type { Config } from "../lib/config";
 import { resolveToolForCommand, resolveRateLimitDelays, resolveCommandMaxTurns } from "../lib/config";
 import { getTool } from "../lib/tool-runner";
@@ -169,6 +170,14 @@ export async function planIssue(
     planFile,
   });
 
+  // Try to read the plan file content for posting as comment
+  let planContent = "";
+  try {
+    planContent = await readFile(resolve(cwd, planFile), "utf-8");
+  } catch {
+    // Plan file might not have been written — use AI output as fallback
+  }
+
   // Remove needs-plan label
   await removeLabel(issueNum, LABELS.needsPlan, cwd);
 
@@ -195,11 +204,12 @@ export async function planIssue(
 
       const subList = [...indexToNumber.values()].map((n) => `- #${n}`).join("\n");
       await addLabel(issueNum, LABELS.waiting, cwd);
+      const planSection = planContent ? `\n\n<details><summary>Implementasjonsplan</summary>\n\n${planContent}\n\n</details>` : "";
       await commentOnIssue(
         issueNum,
         formatIssueComment(
           "plan klar — sub-issues opprettet",
-          `Implementasjonsplan er generert og lagret i \`${planFile}\`.\n\n${indexToNumber.size} sub-issues er opprettet og vil kjøres i riktig rekkefølge:\n\n${subList}`
+          `${indexToNumber.size} sub-issues er opprettet og vil kjøres i riktig rekkefølge:\n\n${subList}${planSection}`
         ),
         cwd
       );
@@ -215,22 +225,24 @@ export async function planIssue(
       if (imported) {
         const subList = imported.issueNumbers.map((n) => `- #${n}`).join("\n");
         await addLabel(issueNum, LABELS.waiting, cwd);
+        const planSection = planContent ? `\n\n<details><summary>Implementasjonsplan</summary>\n\n${planContent}\n\n</details>` : "";
         await commentOnIssue(
           issueNum,
           formatIssueComment(
             "plan klar — tasks opprettet",
-            `Implementasjonsplan er generert og lagret i \`${planFile}\`.\n\n${imported.issueNumbers.length} task-issues er opprettet under milestone og kjøres automatisk:\n\n${subList}`
+            `${imported.issueNumbers.length} task-issues er opprettet under milestone og kjøres automatisk:\n\n${subList}${planSection}`
           ),
           cwd
         );
       } else {
         // Plan has no tasks — just fix it directly
         await addLabel(issueNum, LABELS.autofix, cwd);
+        const planSection = planContent ? `\n\n<details><summary>Implementasjonsplan</summary>\n\n${planContent}\n\n</details>` : "";
         await commentOnIssue(
           issueNum,
           formatIssueComment(
             "plan klar",
-            `Implementasjonsplan er generert og klar til utførelse.\n\nSe planen: \`${planFile}\`\n\nJeg starter implementasjonen automatisk.`
+            `Implementasjonsplan er klar til utførelse. Starter implementasjonen automatisk.${planSection}`
           ),
           cwd
         );
@@ -246,11 +258,12 @@ export async function planIssue(
       : "Plan generert, men trenger din gjennomgang.";
 
   await addLabel(issueNum, LABELS.waiting, cwd);
+  const planSection = planContent ? `\n\n<details><summary>Implementasjonsplan</summary>\n\n${planContent}\n\n</details>` : "";
   await commentOnIssue(
     issueNum,
     formatIssueComment(
       "plan klar — trenger gjennomgang",
-      `Implementasjonsplan er generert og lagret i \`${planFile}\`.\n\n**Åpent spørsmål:** ${reason}\n\nGjennomgå planen og legg til en kommentar med instruksjoner. Sett \`autofix\`-labelen for å starte implementasjonen når du er klar.`
+      `**Åpent spørsmål:** ${reason}\n\nGjennomgå planen og legg til en kommentar med instruksjoner. Sett \`autofix\`-labelen for å starte implementasjonen når du er klar.${planSection}`
     ),
     cwd
   );
