@@ -305,6 +305,7 @@ export async function fixIssue(
   process.off("SIGINT", cleanup);
   process.off("SIGTERM", cleanup);
   await removeLabel(issueNum, LABELS.inProgress, cwd).catch(() => {});
+  await removeLabel(issueNum, LABELS.autofix, cwd).catch(() => {});
 
   // Delete plan file before clearing state
   const finalState = await loadState(stateDir, repoContext.repoName, issueNum);

@@ -19,7 +19,7 @@ import { splitIssue } from "./split-issue";
 import { worktreesBaseDir } from "../lib/worktree";
 import { PIPELINE_STAGES, STAGE_LABELS } from "../lib/pipeline";
 import { findAnsweredIssues } from "./watch-helpers";
-import { scanNewErrorLogs, initLogOffsets, runSupervisor, findSourceRoot } from "./develop";
+import { scanNewErrorLogs, initLogOffsets, runSupervisor, findSourceRoot, autoResolveWaiting } from "./develop";
 
 export { findAnsweredIssues } from "./watch-helpers";
 
@@ -114,8 +114,20 @@ async function watchCron(config: Config, cwd: string): Promise<void> {
   }
 
   // 5. Dispatch fix for autofix issues (and retry stuck ones)
+  // Build set of issue numbers that already have an open PR (by branch name convention)
+  const issuesWithOpenPR = new Set(
+    allOpenPRs
+      .map((pr) => {
+        const m = pr.headBranch.match(/^flogvit-pilot\/fix-(\d+)$/);
+        return m ? Number(m[1]) : null;
+      })
+      .filter((n): n is number => n !== null)
+  );
+
   for (const issue of byLabel(LABELS.autofix)) {
     if (inProgressNums.has(issue.number)) continue;
+    // Skip if a PR already exists for this issue — it's in the pipeline now
+    if (issuesWithOpenPR.has(issue.number)) continue;
     const blockedBy = checkDeps(issue.body, openIssueNums);
     if (blockedBy.length > 0) {
       if (!issue.labels.includes(LABELS.blocked)) {
@@ -362,9 +374,10 @@ function renderUI(
 async function watchLive(config: Config, cwd: string, opts: {
   supervisor: boolean;
   selfImprove: boolean;
+  auto: boolean;
   maxJobsOverride?: number;
 }): Promise<void> {
-  const { supervisor, selfImprove, maxJobsOverride } = opts;
+  const { supervisor, selfImprove, auto, maxJobsOverride } = opts;
   const repoName = basename(cwd);
   const homeDir = process.env.HOME ?? homedir();
   const stateDir = resolve(homeDir, ".flogvit-pilot", "state");
@@ -379,6 +392,8 @@ async function watchLive(config: Config, cwd: string, opts: {
   const SUPERVISOR_COOLDOWN_MS = watchCfg.supervisor_cooldown_s * 1000;
   // Track read offsets per log file so we only send new content to the supervisor
   const logOffsets = new Map<string, number>();
+  // Persistent error trackers — accumulate across scans for pattern detection
+  const errorTrackers = new Map<string, import("./develop").IssueErrorTracker>();
 
   // Resolve source root once for self-improve
   const sourceRoot = selfImprove ? (await findSourceRoot() ?? undefined) : undefined;
@@ -519,6 +534,44 @@ async function watchLive(config: Config, cwd: string, opts: {
         jobPromises.set(jobName, p);
       }
 
+      // AUTO-RESOLVE — opus acts as human decision-maker for waiting issues
+      if (auto) {
+        // Only process issues that haven't been answered by a human and aren't already being auto-resolved
+        const unansweredWaiting = waitingIssues.filter((i) =>
+          !answeredNums.includes(i.number) && !activeJobs.has(`auto-resolve-${i.number}`)
+        );
+        for (const issue of unansweredWaiting) {
+          if (!canStartJobForCommand(config, "fix-issue", activeJobs, maxJobsOverride)) break;
+          const jobName = `auto-resolve-${issue.number}`;
+          activeJobs.set(jobName, { label: issue.title, startedAt: Date.now(), stage: "auto", model: "opus" });
+          log(jobName, `auto-resolving waiting issue #${issue.number}`);
+          const p = autoResolveWaiting({ issueNum: issue.number, cwd, config }).then(({ summary }) => {
+            activeJobs.delete(jobName);
+            log(jobName, summary);
+          }).catch((err) => onJobError(jobName, err)).finally(() => jobPromises.delete(jobName));
+          jobPromises.set(jobName, p);
+        }
+
+        // Also handle waiting PRs
+        const waitingPRs = allOpenPRs.filter((pr) =>
+          pr.labels.includes(LABELS.waiting) && !activeJobs.has(`auto-resolve-pr-${pr.number}`)
+        );
+        for (const pr of waitingPRs) {
+          if (!canStartJobForCommand(config, "fix-issue", activeJobs, maxJobsOverride)) break;
+          // Find linked issue number from PR body
+          const issueNum = parsePRIssueNumber(pr.body);
+          if (!issueNum) continue;
+          const jobName = `auto-resolve-pr-${pr.number}`;
+          activeJobs.set(jobName, { label: pr.title, startedAt: Date.now(), stage: "auto", model: "opus" });
+          log(jobName, `auto-resolving waiting PR #${pr.number}`);
+          const p = autoResolveWaiting({ issueNum, cwd, config }).then(({ summary }) => {
+            activeJobs.delete(jobName);
+            log(jobName, summary);
+          }).catch((err) => onJobError(jobName, err)).finally(() => jobPromises.delete(jobName));
+          jobPromises.set(jobName, p);
+        }
+      }
+
       // PIPELINE STAGES — highest priority among capped jobs (near completion)
       // Track which PRs already have an active pipeline job to prevent concurrent stages
       const prsWithActivePipelineJob = new Set<number>();
@@ -639,8 +692,20 @@ async function watchLive(config: Config, cwd: string, opts: {
         jobPromises.set(jobName, p);
       }
 
+      // Build set of issue numbers that already have an open PR (by branch name convention)
+      const issuesWithOpenPR = new Set(
+        allOpenPRs
+          .map((pr) => {
+            const m = pr.headBranch.match(/^flogvit-pilot\/fix-(\d+)$/);
+            return m ? Number(m[1]) : null;
+          })
+          .filter((n): n is number => n !== null)
+      );
+
       for (const issue of sortByPriority(byLabel(LABELS.autofix))) {
         if (inProgressNums.has(issue.number)) continue;
+        // Skip if a PR already exists for this issue — it's in the pipeline now
+        if (issuesWithOpenPR.has(issue.number)) continue;
         if (!canStartJobForCommand(config, "fix-issue", activeJobs, maxJobsOverride)) continue;
         const blockedBy = checkDeps(issue.body, openIssueNums);
         if (blockedBy.length > 0) {
@@ -746,7 +811,7 @@ async function watchLive(config: Config, cwd: string, opts: {
           const supervisorLabel = selfImprove ? `${errors.length} error(s) — self-improve on` : `${errors.length} error(s) in logs`;
           activeJobs.set("supervisor", { label: supervisorLabel, startedAt: Date.now(), stage: "supervisor", model: "haiku" });
           log("supervisor", `found ${errors.length} new error log(s)`);
-          const p = runSupervisor({ targetCwd: cwd, errors, config, selfImprove, sourceRoot }).then(({ summary }) => {
+          const p = runSupervisor({ targetCwd: cwd, errors, config, selfImprove, sourceRoot, errorTrackers }).then(({ summary }) => {
             activeJobs.delete("supervisor");
             supervisorStatus.running = false;
             supervisorStatus.lastSummary = summary;
@@ -832,11 +897,14 @@ export async function run(args: string[], config: Config, cwd: string): Promise<
   // --self-improve: addon to --supervisor that also fixes flogvit-pilot source
   const selfImprove = args.includes("--self-improve");
 
+  // --auto: opus acts as human decision-maker for waiting issues
+  const auto = args.includes("--auto");
+
   // --jobs N — override max concurrent jobs (overrides config default)
   const jobsIndex = args.indexOf("--jobs");
   const maxJobsOverride = jobsIndex !== -1 ? parseInt(args[jobsIndex + 1], 10) : undefined;
 
-  const liveOpts = { supervisor: supervisor || selfImprove, selfImprove, maxJobsOverride };
+  const liveOpts = { supervisor: supervisor || selfImprove, selfImprove, auto, maxJobsOverride };
 
   if (reposValue) {
     const repos = reposValue.split(",").map((r) => r.trim());
